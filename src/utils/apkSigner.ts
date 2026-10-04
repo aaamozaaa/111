@@ -10,7 +10,6 @@ export interface KeystoreConfig {
   organization: string;
 }
 
-/** Convert ArrayBuffer / Uint8Array to base64 */
 function toBase64(buf: ArrayBuffer | Uint8Array): string {
   const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   let s = '';
@@ -18,18 +17,6 @@ function toBase64(buf: ArrayBuffer | Uint8Array): string {
   return btoa(s);
 }
 
-/** Convert base64 to Uint8Array */
-function fromBase64(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-/**
- * Generate a real RSA-2048 keypair and sign CERT.SF bytes.
- * Returns the raw RSA signature + SPKI public key bytes for embedding.
- */
 async function generateAndSign(
   dataToSign: Uint8Array
 ): Promise<{ signature: Uint8Array; publicKeySpki: Uint8Array }> {
@@ -55,17 +42,6 @@ async function generateAndSign(
   return { signature, publicKeySpki };
 }
 
-/**
- * Builds a minimal PKCS#7 / CMS-like CERT.RSA block containing:
- * - alias / org metadata
- * - SPKI public key
- * - RSA-SHA256 signature over CERT.SF
- *
- * Note: Full X.509 + ASN.1 PKCS#7 that PackageManager accepts on all devices
- * requires a complete certificate chain. This produces a cryptographically real
- * RSA signature suitable for integrity checks and debugging. For Play Store /
- * production install on locked devices, re-sign with apksigner + your keystore.
- */
 async function buildCertRsa(
   certSfBytes: Uint8Array,
   alias: string,
@@ -77,17 +53,16 @@ async function buildCertRsa(
   const meta = new TextEncoder().encode(
     [
       'APK-AI-STUDIO-SIGNED-V1',
-      `Alias: ${alias}`,
-      `CN: ${commonName}`,
-      `O: ${org}`,
-      `Date: ${new Date().toISOString()}`,
-      `Algo: RSASSA-PKCS1-v1_5-SHA256',
-      `PubKey-SPKI-Len: ${publicKeySpki.length}`,
-      `Sig-Len: ${signature.length}`,
+      'Alias: ' + alias,
+      'CN: ' + commonName,
+      'O: ' + org,
+      'Date: ' + new Date().toISOString(),
+      'Algo: RSASSA-PKCS1-v1_5-SHA256',
+      'PubKey-SPKI-Len: ' + publicKeySpki.length,
+      'Sig-Len: ' + signature.length,
     ].join('\n') + '\n\n'
   );
 
-  // Layout: [meta][pubkey][signature]
   const out = new Uint8Array(meta.length + publicKeySpki.length + signature.length);
   out.set(meta, 0);
   out.set(publicKeySpki, meta.length);
@@ -95,13 +70,6 @@ async function buildCertRsa(
   return out;
 }
 
-/**
- * Builds and signs a working copy of an APK.
- * - Compiles AndroidManifest.xml to binary AXML
- * - Builds JAR Manifest (MANIFEST.MF + CERT.SF)
- * - Signs CERT.SF with a real RSA-2048 key (Web Crypto)
- * - Injects APK Signature Scheme v2 block structure
- */
 export async function buildAndSignApk(
   project: ApkProject,
   baseZip: JSZip | null,
@@ -140,7 +108,6 @@ export async function buildAndSignApk(
     zip.file('AndroidManifest.xml', axmlBytes);
   }
 
-  // 1. MANIFEST.MF
   onProgress?.(40, 'تولید شناسه و هش فایل‌ها (MANIFEST.MF)...');
   let manifestMf = 'Manifest-Version: 1.0\nCreated-By: APK AI Studio Signer\n\n';
   const fileDigests: Record<string, string> = {};
@@ -151,23 +118,24 @@ export async function buildAndSignApk(
     const hashBuf = await crypto.subtle.digest('SHA-256', contentBuf);
     const b64Hash = toBase64(hashBuf);
     fileDigests[path] = b64Hash;
-    manifestMf += `Name: ${path}\nSHA-256-Digest: ${b64Hash}\n\n`;
+    manifestMf += 'Name: ' + path + '\nSHA-256-Digest: ' + b64Hash + '\n\n';
   }
   zip.file('META-INF/MANIFEST.MF', manifestMf);
 
-  // 2. CERT.SF
   onProgress?.(55, 'ایجاد فایل اعتبارسنجی امضا (CERT.SF)...');
   const manifestMfBuf = new TextEncoder().encode(manifestMf);
   const manifestMfHashBuf = await crypto.subtle.digest('SHA-256', manifestMfBuf);
   const manifestMfB64 = toBase64(manifestMfHashBuf);
 
-  let certSf = `Signature-Version: 1.0\nCreated-By: APK AI Studio Signer\nSHA-256-Digest-Manifest: ${manifestMfB64}\n\n`;
+  let certSf =
+    'Signature-Version: 1.0\nCreated-By: APK AI Studio Signer\nSHA-256-Digest-Manifest: ' +
+    manifestMfB64 +
+    '\n\n';
   for (const [path, digest] of Object.entries(fileDigests)) {
-    certSf += `Name: ${path}\nSHA-256-Digest: ${digest}\n\n`;
+    certSf += 'Name: ' + path + '\nSHA-256-Digest: ' + digest + '\n\n';
   }
   zip.file('META-INF/CERT.SF', certSf);
 
-  // 3. CERT.RSA — real RSA-2048 signature over CERT.SF
   onProgress?.(70, 'تولید کلید RSA-2048 و امضای دیجیتال واقعی...');
   const alias = keystore?.alias || 'apkaistudio-release';
   const org = keystore?.organization || 'APK AI Studio';
@@ -176,7 +144,6 @@ export async function buildAndSignApk(
   const certRsa = await buildCertRsa(certSfBytes, alias, org, cn);
   zip.file('META-INF/CERT.RSA', certRsa);
 
-  // 4. Package APK
   onProgress?.(85, 'بسته‌بندی نهایی و تزریق بلوک امضای Scheme v2...');
   const baseBlob = await zip.generateAsync({
     type: 'arraybuffer',
@@ -194,7 +161,11 @@ export async function buildAndSignApk(
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 
-  const outFileName = `${project.name.replace(/[^a-zA-Z0-9_\-]/g, '_')}_signed_v${project.manifest.versionName || '1.0'}.apk`;
+  const outFileName =
+    project.name.replace(/[^a-zA-Z0-9_\-]/g, '_') +
+    '_signed_v' +
+    (project.manifest.versionName || '1.0') +
+    '.apk';
 
   onProgress?.(100, 'ساخت و امضای فایل APK با موفقیت به پایان رسید.');
 
@@ -205,9 +176,6 @@ export async function buildAndSignApk(
   };
 }
 
-/**
- * Injects Android APK Signing Block (Scheme v2) before Central Directory
- */
 function injectApkSigningBlock(zipBuffer: ArrayBuffer, alias: string): ArrayBuffer {
   const u8 = new Uint8Array(zipBuffer);
   const dv = new DataView(zipBuffer);
@@ -226,7 +194,7 @@ function injectApkSigningBlock(zipBuffer: ArrayBuffer, alias: string): ArrayBuff
   if (centralDirOffset <= 0 || centralDirOffset > eocdOffset) return zipBuffer;
 
   const MAGIC = [0x41, 0x50, 0x4b, 0x20, 0x53, 0x69, 0x67, 0x20, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x20, 0x34, 0x32];
-  const payloadData = new TextEncoder().encode(`APK-SIG-V2:${alias}:${Date.now()}`);
+  const payloadData = new TextEncoder().encode('APK-SIG-V2:' + alias + ':' + Date.now());
   const pairLength = 4 + payloadData.length;
   const blockSize = 8 + 8 + pairLength + 8 + 16;
 
@@ -258,7 +226,6 @@ function injectApkSigningBlock(zipBuffer: ArrayBuffer, alias: string): ArrayBuff
   return finalBuf.buffer;
 }
 
-/** Browser download helper */
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
