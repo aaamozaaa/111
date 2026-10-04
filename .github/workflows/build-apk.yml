@@ -45,8 +45,7 @@ jobs:
           sdkmanager "platforms;android-33" "build-tools;33.0.2" || true
 
       - name: Install npm Dependencies
-        run: |
-          npm install --legacy-peer-deps
+        run: npm install --legacy-peer-deps
 
       - name: Build Web Application (Vite)
         run: |
@@ -62,7 +61,6 @@ jobs:
       - name: Inject native plugins + apksig dependencies
         run: |
           set -e
-
           MAIN=$(find android/app/src/main/java -name 'MainActivity.java' | head -1)
           if [ -z "$MAIN" ]; then
             echo "ERROR: MainActivity.java not found"
@@ -76,80 +74,41 @@ jobs:
           sed "s/^package .*/package ${PKG};/" native/android/InstalledAppsPlugin.java > "$PKG_DIR/InstalledAppsPlugin.java"
           sed "s/^package .*/package ${PKG};/" native/android/ApkSignerPlugin.java > "$PKG_DIR/ApkSignerPlugin.java"
 
-          cat > "$MAIN" << 'MAINEOF'
-          package PLACEHOLDER_PKG;
-
-          import android.os.Bundle;
-          import com.getcapacitor.BridgeActivity;
-
-          public class MainActivity extends BridgeActivity {
-            @Override
-            public void onCreate(Bundle savedInstanceState) {
-              registerPlugin(InstalledAppsPlugin.class);
-              registerPlugin(ApkSignerPlugin.class);
-              super.onCreate(savedInstanceState);
-            }
-          }
-          MAINEOF
-          sed -i "s/PLACEHOLDER_PKG/${PKG}/" "$MAIN"
-          sed -i 's/^          //' "$MAIN"
+          printf '%s\n' \
+            "package ${PKG};" \
+            "" \
+            "import android.os.Bundle;" \
+            "import com.getcapacitor.BridgeActivity;" \
+            "" \
+            "public class MainActivity extends BridgeActivity {" \
+            "  @Override" \
+            "  public void onCreate(Bundle savedInstanceState) {" \
+            "    registerPlugin(InstalledAppsPlugin.class);" \
+            "    registerPlugin(ApkSignerPlugin.class);" \
+            "    super.onCreate(savedInstanceState);" \
+            "  }" \
+            "}" > "$MAIN"
           cat "$MAIN"
 
           APP_GRADLE="android/app/build.gradle"
           if [ -f "$APP_GRADLE" ]; then
             if ! grep -q 'com.android.tools.build:apksig' "$APP_GRADLE"; then
               sed -i '/dependencies {/a\    implementation "com.android.tools.build:apksig:8.2.2"\n    implementation "org.bouncycastle:bcprov-jdk18on:1.78.1"\n    implementation "org.bouncycastle:bcpkix-jdk18on:1.78.1"' "$APP_GRADLE"
-              echo "Added apksig + bouncycastle"
             fi
 
-            # Fix duplicate META-INF from BouncyCastle multi-release JARs
             if ! grep -q 'META-INF/versions' "$APP_GRADLE"; then
-              # Insert packaging block inside android { after the opening
-              python3 << 'PY'
-          from pathlib import Path
-          p = Path("android/app/build.gradle")
-          text = p.read_text()
-          packaging = '''
-      packaging {
-          resources {
-              excludes += [
-                  "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
-                  "META-INF/DEPENDENCIES",
-                  "META-INF/LICENSE",
-                  "META-INF/LICENSE.txt",
-                  "META-INF/license.txt",
-                  "META-INF/NOTICE",
-                  "META-INF/NOTICE.txt",
-                  "META-INF/notice.txt",
-                  "META-INF/*.SF",
-                  "META-INF/*.DSA",
-                  "META-INF/*.RSA",
-                  "META-INF/OSGI-INF/**"
-              ]
-              pickFirsts += ["META-INF/*"]
-          }
-      }
-          '''
-          if "packaging {" not in text:
-              # after android {
-              text = text.replace("android {", "android {" + packaging, 1)
-              p.write_text(text)
-              print("Added packaging excludes")
-          else:
-              print("packaging block already present")
-          PY
+              # Insert packaging excludes right after "android {"
+              sed -i '/^android {/a\    packaging {\n        resources {\n            excludes += [\n                "META-INF/versions/**",\n                "META-INF/DEPENDENCIES",\n                "META-INF/LICENSE*",\n                "META-INF/NOTICE*",\n                "META-INF/*.SF",\n                "META-INF/*.DSA",\n                "META-INF/*.RSA",\n                "META-INF/OSGI-INF/**"\n            ]\n            pickFirsts += ["META-INF/*"]\n        }\n    }' "$APP_GRADLE"
+              echo "Added packaging excludes"
             fi
-            echo "--- app/build.gradle ---"
             cat "$APP_GRADLE"
           fi
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            if ! grep -q 'QUERY_ALL_PACKAGES' "$MANIFEST"; then
-              sed -i 's|<application|<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.MAIN" />\n            <category android:name="android.intent.category.LAUNCHER" />\n        </intent>\n    </queries>\n    <application|' "$MANIFEST"
-              if ! grep -q 'xmlns:tools' "$MANIFEST"; then
-                sed -i 's|xmlns:android="http://schemas.android.com/apk/res/android"|xmlns:android="http://schemas.android.com/apk/res/android"\n    xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
-              fi
+          if [ -f "$MANIFEST" ] && ! grep -q 'QUERY_ALL_PACKAGES' "$MANIFEST"; then
+            sed -i 's|<application|<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.MAIN" />\n            <category android:name="android.intent.category.LAUNCHER" />\n        </intent>\n    </queries>\n    <application|' "$MANIFEST"
+            if ! grep -q 'xmlns:tools' "$MANIFEST"; then
+              sed -i 's|xmlns:android="http://schemas.android.com/apk/res/android"|xmlns:android="http://schemas.android.com/apk/res/android"\n    xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
             fi
           fi
 
@@ -168,5 +127,4 @@ jobs:
           if-no-files-found: error
 
       - name: Notify Build Success
-        run: |
-          echo "✅ APK build completed successfully!"
+        run: echo "APK build completed successfully"
