@@ -30,28 +30,28 @@ export interface InstalledAppsPlugin {
   saveApkToDownloads(options: { fileName: string; base64: string }): Promise<SaveApkResult>;
 }
 
-const InstalledApps = registerPlugin<InstalledAppsPlugin>('InstalledApps', {
-  web: {
-    async getInstalledApps() {
-      return { apps: [] };
-    },
-    async extractApk() {
-      throw new Error('استخراج APK فقط روی اندروید native در دسترس است');
-    },
-    async isAvailable() {
-      return { available: false };
-    },
-    async saveApkToDownloads() {
-      throw new Error('ذخیره native فقط روی اندروید در دسترس است');
-    },
-  },
-});
+/** Do NOT provide web stubs that return available:false — that hides real native errors. */
+const InstalledApps = registerPlugin<InstalledAppsPlugin>('InstalledApps');
 
 export function isNativeAndroid(): boolean {
   try {
     return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
   } catch {
     return false;
+  }
+}
+
+export function capacitorDiagnostics(): string {
+  try {
+    return (
+      'platform=' +
+      Capacitor.getPlatform() +
+      ' native=' +
+      String(Capacitor.isNativePlatform()) +
+      ' plugin="InstalledApps"'
+    );
+  } catch (e) {
+    return 'diagnostics-failed: ' + String(e);
   }
 }
 
@@ -73,25 +73,40 @@ export async function canListInstalledApps(): Promise<boolean> {
 }
 
 export async function probePluginError(): Promise<string> {
+  const diag = capacitorDiagnostics();
   if (!isNativeAndroid()) {
-    return 'این برنامه روی اندروید native اجرا نمی‌شود (پلتفرم: ' + Capacitor.getPlatform() + ')';
+    return (
+      'این صفحه native اندروید نیست (' +
+      diag +
+      ').\nاگر از مرورگر باز کرده‌اید، APK را از GitHub Actions نصب کنید.\n' +
+      'در هر صورت می‌توانید با دکمه «انتخاب فایل APK» کار کنید.'
+    );
   }
   try {
-    await InstalledApps.isAvailable();
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes('not implemented') || msg.includes('UNIMPLEMENTED') || msg.includes('"InstalledApps"')) {
-      return 'پلاگین InstalledApps در این APK ثبت نشده. APK را از آخرین بیلد GitHub Actions نصب کنید.';
+    const r = await InstalledApps.isAvailable();
+    if (r?.available) {
+      try {
+        await InstalledApps.getInstalledApps({ includeSystem: false });
+        return '';
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return 'پلاگین هست ولی لیست برنامه خطا داد: ' + msg + '\n(' + diag + ')';
+      }
     }
-    return 'خطا: ' + msg;
-  }
-  try {
-    await InstalledApps.getInstalledApps({ includeSystem: false });
-    return '';
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return 'خطا در خواندن لیست: ' + msg;
+    if (/not implemented|UNIMPLEMENTED|"InstalledApps"|is not implemented/i.test(msg)) {
+      return (
+        'پلاگین InstalledApps در این APK ثبت نشده.\n' +
+        'حتماً APK را از آخرین بیلد موفق GitHub Actions (#48 به بعد) نصب کنید و نسخه قبلی را کامل حذف کنید.\n' +
+        '(' +
+        diag +
+        ')\n\nتا آن موقع از «انتخاب فایل APK از حافظه» استفاده کنید.'
+      );
+    }
+    return 'خطا: ' + msg + '\n(' + diag + ')';
   }
+  return 'پلاگین پاسخ available=false داد. APK جدید از Actions نصب کنید.\n(' + diag + ')';
 }
 
 export { InstalledApps };
