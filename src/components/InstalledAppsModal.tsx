@@ -1,12 +1,12 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ApkProject } from '../types/apk';
-import {
-  POPULAR_INSTALLED_APPS,
-  InstalledAppTemplate,
-  createProjectFromInstalledApp,
-} from '../utils/installedAppsDatabase';
 import { parseApkFile } from '../utils/apkParser';
-import { encodeAxml } from '../utils/axmlEncoder';
+import {
+  InstalledApps,
+  InstalledAppInfo,
+  canListInstalledApps,
+  isNativeAndroid,
+} from '../plugins/InstalledAppsPlugin';
 import {
   Smartphone,
   Search,
@@ -15,6 +15,8 @@ import {
   Sparkles,
   Loader2,
   Info,
+  RefreshCw,
+  Package,
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -24,23 +26,18 @@ interface InstalledAppsModalProps {
   onSelectProject: (project: ApkProject, zip: JSZip | null) => void;
 }
 
-async function createMinimalZipFromTemplate(
-  template: InstalledAppTemplate,
-  rawXml: string
-): Promise<JSZip> {
-  const zip = new JSZip();
-  try {
-    const axml = encodeAxml(rawXml);
-    zip.file('AndroidManifest.xml', axml);
-  } catch {
-    zip.file('AndroidManifest.xml', rawXml);
-  }
-  zip.file(
-    'assets/README.txt',
-    'APK AI Studio workspace for ' + template.packageName + '\n'
-  );
-  zip.file('res/raw/placeholder.txt', 'resource placeholder');
-  return zip;
+function base64ToBlob(base64: string, mime = 'application/vnd.android.package-archive'): Blob {
+  const bin = atob(base64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+function formatSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '—';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
@@ -49,78 +46,101 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
   onSelectProject,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<
-    'all' | 'social' | 'tools' | 'utility' | 'game'
-  >('all');
-  const [customPackage, setCustomPackage] = useState('');
+  const [apps, setApps] = useState<InstalledAppInfo[]>([]);
+  const [nativeOk, setNativeOk] = useState(false);
+  const [loadingList, setLoadingList] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusText, setStatusText] = useState('');
+  const [includeSystem, setIncludeSystem] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadApps = useCallback(async () => {
+    setLoadingList(true);
+    setListError(null);
+    try {
+      const available = await canListInstalledApps();
+      setNativeOk(available);
+      if (!available) {
+        setApps([]);
+        setListError(
+          isNativeAndroid()
+            ? 'پلاگین native در دسترس نیست. این نسخه را دوباره از GitHub Actions بسازید.'
+            : 'لیست برنامه‌های واقعی فقط داخل اپ اندروید کار می‌کند. از دکمه انتخاب فایل APK استفاده کنید.'
+        );
+        return;
+      }
+      const result = await InstalledApps.getInstalledApps({ includeSystem });
+      const sorted = (result.apps || []).slice().sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', 'fa')
+      );
+      setApps(sorted);
+      if (sorted.length === 0) {
+        setListError('هیچ برنامه‌ای پیدا نشد. دسترسی QUERY_ALL_PACKAGES را در تنظیمات گوشی بررسی کنید.');
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setListError('خطا در خواندن برنامه‌های نصب‌شده: ' + msg);
+      setApps([]);
+      setNativeOk(false);
+    } finally {
+      setLoadingList(false);
+    }
+  }, [includeSystem]);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadApps();
+    }
+  }, [isOpen, loadApps]);
 
   if (!isOpen) return null;
 
-  const filteredApps = POPULAR_INSTALLED_APPS.filter((app) => {
-    const matchesSearch =
-      app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.nameFa.includes(searchQuery) ||
-      app.packageName.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCat = categoryFilter === 'all' || app.category === categoryFilter;
-    return matchesSearch && matchesCat;
+  const filtered = apps.filter((app) => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      app.name.toLowerCase().includes(q) ||
+      app.packageName.toLowerCase().includes(q)
+    );
   });
 
-  const handlePickInstalled = async (template: InstalledAppTemplate) => {
+  const handlePickRealApp = async (app: InstalledAppInfo) => {
     setIsProcessing(true);
-    setStatusText('در حال ساخت پروژه برای «' + template.nameFa + '»...');
+    setStatusText('در حال استخراج APK واقعی «' + app.name + '» از گوشی...');
     try {
-      const project = createProjectFromInstalledApp(template);
-      const zip = await createMinimalZipFromTemplate(
-        template,
-        project.manifest.rawXmlText
-      );
-      onSelectProject(project, zip);
-      onClose();
-    } catch (e: any) {
-      alert(e?.message || 'خطا در ساخت پروژه');
-    } finally {
-      setIsProcessing(false);
-      setStatusText('');
-    }
-  };
+      const extracted = await InstalledApps.extractApk({
+        packageName: app.packageName,
+        includeBase64: true,
+      });
 
-  const handleCustomPackageSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const pkg = customPackage.trim();
-    if (!pkg) return;
-    setIsProcessing(true);
-    setStatusText('ساخت پروژه برای ' + pkg + '...');
-    try {
-      const customTemplate: InstalledAppTemplate = {
-        name: pkg.split('.').pop() || pkg,
-        nameFa: pkg.split('.').pop() || pkg,
-        packageName: pkg,
-        versionName: '1.0.0',
-        versionCode: 100,
-        minSdkVersion: 21,
-        targetSdkVersion: 34,
-        category: 'utility',
-        iconColor: 'from-purple-500 to-indigo-600',
-        estimatedSizeMb: 25.0,
-        permissions: [
-          'android.permission.INTERNET',
-          'android.permission.ACCESS_NETWORK_STATE',
-          'android.permission.WAKE_LOCK',
-        ],
-        findingsCount: 2,
-        isCleartext: true,
-        hasAds: false,
-      };
-      const project = createProjectFromInstalledApp(customTemplate);
-      const zip = await createMinimalZipFromTemplate(
-        customTemplate,
-        project.manifest.rawXmlText
+      if (!extracted.base64) {
+        throw new Error(
+          'حجم این APK زیاد است و نتوانستیم آن را در حافظه بارگذاری کنیم. با ابزار APK Extractor فایل را به Downloads بفرستید و از دکمه «انتخاب فایل APK» استفاده کنید.'
+        );
+      }
+
+      setStatusText('در حال تجزیه و تحلیل APK...');
+      const blob = base64ToBlob(extracted.base64);
+      const file = new File([blob], extracted.fileName || app.packageName + '.apk', {
+        type: 'application/vnd.android.package-archive',
+      });
+
+      const { project, zip } = await parseApkFile(
+        file,
+        app.name,
+        (p, t) => setStatusText(t + ' (' + p + '%)')
       );
+
+      // Keep real package identity
+      project.name = app.name;
+      project.fileName = extracted.fileName || project.fileName;
+
       onSelectProject(project, zip);
       onClose();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert('خطا در استخراج برنامه: ' + msg);
     } finally {
       setIsProcessing(false);
       setStatusText('');
@@ -131,7 +151,7 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     setIsProcessing(true);
-    setStatusText('در حال خواندن APK واقعی: ' + file.name);
+    setStatusText('در حال خواندن فایل: ' + file.name);
     try {
       const { project, zip } = await parseApkFile(
         file,
@@ -140,8 +160,9 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
       );
       onSelectProject(project, zip);
       onClose();
-    } catch (err: any) {
-      alert('خطا در باز کردن فایل APK: ' + (err?.message || 'فایل معتبر نیست'));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'فایل معتبر نیست';
+      alert('خطا در باز کردن APK: ' + msg);
     } finally {
       setIsProcessing(false);
       setStatusText('');
@@ -158,36 +179,32 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
               <Smartphone className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">افزودن برنامه برای اصلاح و بیلد</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-bold text-white">برنامه‌های نصب‌شده روی همین گوشی</h2>
+                {nativeOk && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">
+                    واقعی
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                بهترین روش: فایل APK واقعی از گوشی — بعد در دستیار اصلاح و بیلد همان برنامه
+                لیست از PackageManager اندروید خوانده می‌شود — نه نمونهٔ پیش‌فرض
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
-          >
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="p-4 border-b border-slate-800 bg-slate-950/40 space-y-3">
-          <div className="flex items-start gap-2 p-3 rounded-xl bg-sky-950/40 border border-sky-800/40 text-[11px] text-sky-200">
-            <Info className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>
-              برای همان برنامه‌ای که روی گوشی دارید، فایل APK آن را انتخاب کنید (Downloads یا ابزار
-              Extractor). لیست زیر فقط میان‌بر سریع است.
-            </span>
-          </div>
-
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isProcessing}
-            className="w-full flex items-center justify-center gap-2 p-3.5 rounded-xl border-2 border-dashed border-emerald-500/60 bg-emerald-950/30 hover:bg-emerald-900/40 text-emerald-200 text-sm font-bold cursor-pointer transition-all"
+            className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-emerald-500/60 bg-emerald-950/30 hover:bg-emerald-900/40 text-emerald-200 text-sm font-bold cursor-pointer"
           >
             <Upload className="w-5 h-5" />
-            <span>انتخاب فایل APK واقعی از حافظه گوشی</span>
+            <span>یا انتخاب فایل APK از حافظه (Downloads)</span>
           </button>
           <input
             ref={fileInputRef}
@@ -197,97 +214,95 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
             className="hidden"
           />
 
-          <form onSubmit={handleCustomPackageSubmit} className="flex gap-1.5">
-            <input
-              type="text"
-              value={customPackage}
-              onChange={(e) => setCustomPackage(e.target.value)}
-              placeholder="یا نام پکیج (مثلاً ir.divar)..."
-              className="flex-1 px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
-            />
-            <button
-              type="submit"
-              disabled={!customPackage.trim() || isProcessing}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-40"
-            >
-              ساخت پروژه
-            </button>
-          </form>
-
-          <div className="flex flex-col sm:flex-row gap-2 pt-1">
+          <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="جستجو در نمونه‌های سریع..."
+                placeholder="جستجو در نام یا پکیج برنامه‌های نصب‌شده..."
                 className="w-full pr-9 pl-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
-            <div className="flex items-center gap-1 overflow-x-auto text-[11px]">
-              {(['all', 'social', 'tools', 'utility', 'game'] as const).map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setCategoryFilter(cat)}
-                  className={`px-3 py-1.5 rounded-xl cursor-pointer transition-colors shrink-0 ${
-                    categoryFilter === cat
-                      ? 'bg-emerald-600 text-white font-semibold'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {cat === 'all' && 'همه'}
-                  {cat === 'social' && 'اجتماعی'}
-                  {cat === 'tools' && 'ابزار'}
-                  {cat === 'utility' && 'کاربردی'}
-                  {cat === 'game' && 'بازی'}
-                </button>
-              ))}
-            </div>
+            <button
+              onClick={() => loadApps()}
+              disabled={loadingList || isProcessing}
+              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingList ? 'animate-spin' : ''}`} />
+              بروزرسانی لیست
+            </button>
           </div>
+
+          <label className="flex items-center gap-2 text-[11px] text-slate-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeSystem}
+              onChange={(e) => setIncludeSystem(e.target.checked)}
+              className="rounded border-slate-600"
+            />
+            نمایش برنامه‌های سیستمی هم
+          </label>
         </div>
 
-        <div className="p-5 overflow-y-auto flex-1 max-h-[50vh] space-y-2.5">
+        <div className="p-4 overflow-y-auto flex-1 max-h-[55vh]">
           {isProcessing ? (
             <div className="py-16 text-center space-y-3">
               <Loader2 className="w-8 h-8 animate-spin text-emerald-400 mx-auto" />
               <p className="text-xs text-slate-300 font-medium">{statusText || 'در حال پردازش...'}</p>
             </div>
-          ) : filteredApps.length === 0 ? (
-            <div className="py-12 text-center text-xs text-slate-500">موردی یافت نشد.</div>
+          ) : loadingList ? (
+            <div className="py-16 text-center space-y-3">
+              <Loader2 className="w-8 h-8 animate-spin text-emerald-400 mx-auto" />
+              <p className="text-xs text-slate-300">در حال خواندن برنامه‌های نصب‌شده از گوشی...</p>
+            </div>
+          ) : listError && apps.length === 0 ? (
+            <div className="py-10 px-4 text-center space-y-3">
+              <Info className="w-8 h-8 text-amber-400 mx-auto" />
+              <p className="text-xs text-slate-300 leading-relaxed">{listError}</p>
+              <p className="text-[11px] text-slate-500">
+                هنوز می‌توانید با دکمه بالا یک فایل APK از حافظه انتخاب کنید.
+              </p>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="py-12 text-center text-xs text-slate-500">نتیجه‌ای برای جستجو یافت نشد.</div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {filteredApps.map((app) => (
-                <div
+            <div className="space-y-2">
+              <p className="text-[11px] text-slate-400 mb-2">
+                {filtered.length} برنامه · برای اصلاح و بیلد همان APK واقعی انتخاب کنید
+              </p>
+              {filtered.map((app) => (
+                <button
                   key={app.packageName}
-                  onClick={() => handlePickInstalled(app)}
-                  className="p-3.5 rounded-2xl border border-slate-800 bg-slate-950/60 hover:bg-slate-900 hover:border-emerald-500/50 transition-all cursor-pointer group"
+                  type="button"
+                  onClick={() => handlePickRealApp(app)}
+                  className="w-full p-3 rounded-xl border border-slate-800 bg-slate-950/60 hover:bg-slate-900 hover:border-emerald-500/50 transition-all cursor-pointer text-right"
                 >
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`w-11 h-11 rounded-xl bg-gradient-to-tr ${app.iconColor} text-white font-bold flex items-center justify-center shrink-0`}
-                    >
-                      {app.name.charAt(0).toUpperCase()}
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-emerald-400 shrink-0">
+                      <Package className="w-5 h-5" />
                     </div>
-                    <div className="overflow-hidden flex-1">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className="text-xs font-bold text-white truncate">{app.nameFa}</h4>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
-                          v{app.versionName}
+                        <span className="text-xs font-bold text-white truncate">{app.name}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono shrink-0">
+                          v{app.versionName || '?'}
                         </span>
                       </div>
-                      <p className="text-[10px] text-slate-500 font-mono truncate">{app.packageName}</p>
+                      <p className="text-[10px] text-slate-500 font-mono truncate mt-0.5">{app.packageName}</p>
+                      <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
+                        <span>{formatSize(app.sizeBytes)}</span>
+                        {app.isSystem && (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">سیستمی</span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-                    <span className="text-slate-400">
-                      {app.estimatedSizeMb} MB · {app.permissions.length} مجوز
-                    </span>
-                    <span className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 font-semibold group-hover:bg-emerald-500 group-hover:text-slate-950">
+                    <span className="text-[10px] px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 font-semibold shrink-0">
                       انتخاب
                     </span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -296,12 +311,9 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
         <div className="px-5 py-3 border-t border-slate-800 bg-slate-950 flex items-center justify-between text-xs">
           <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-emerald-400" />
-            بعد از انتخاب → دستیار → اصلاح → بیلد همان برنامه
+            انتخاب → استخراج APK واقعی → دستیار → اصلاح → بیلد
           </span>
-          <button
-            onClick={onClose}
-            className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs cursor-pointer"
-          >
+          <button onClick={onClose} className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs cursor-pointer">
             بستن
           </button>
         </div>
