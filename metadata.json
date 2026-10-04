@@ -1,0 +1,6 @@
+{
+  "name": "APK AI Studio",
+  "description": "دستیار هوشمند و تحلیلگر حرفه‌ای APK، اسکنر امنیتی، اکسپلورر کد و فایل، دیباگر و مدیریت پروژه اندروید",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
