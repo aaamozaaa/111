@@ -9,16 +9,13 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
-import java.security.PrivateKey;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -33,9 +30,6 @@ import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
-/**
- * Signs an APK with Google's apksig (v1 + v2 + v3) so Android will actually install it.
- */
 @CapacitorPlugin(name = "ApkSigner")
 public class ApkSignerPlugin extends Plugin {
 
@@ -61,7 +55,8 @@ public class ApkSignerPlugin extends Plugin {
             return;
         }
 
-        fileName = fileName.replaceAll("[^a-zA-Z0-9._\\-]", "_");
+        // hyphen at end of character class — no backslash
+        fileName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
         if (!fileName.toLowerCase().endsWith(".apk")) {
             fileName = fileName + ".apk";
         }
@@ -77,7 +72,6 @@ public class ApkSignerPlugin extends Plugin {
                 fos.flush();
             }
 
-            // Strip any incomplete META-INF signatures before re-signing
             stripMetaInfSignatures(inputApk);
 
             KeyStore.PrivateKeyEntry keyEntry = loadOrCreateKey();
@@ -118,8 +112,6 @@ public class ApkSignerPlugin extends Plugin {
     }
 
     private void stripMetaInfSignatures(File apkFile) throws Exception {
-        // Re-pack ZIP without META-INF/*.SF, *.RSA, *.DSA, *.EC, MANIFEST.MF signature entries
-        // so apksig can write clean signatures. Use simple rename via ZipInput/OutputStream.
         java.util.zip.ZipInputStream zis = null;
         java.util.zip.ZipOutputStream zos = null;
         File temp = new File(apkFile.getParentFile(), apkFile.getName() + ".stripped");
@@ -156,7 +148,6 @@ public class ApkSignerPlugin extends Plugin {
             if (zos != null) try { zos.close(); } catch (Exception ignored) {}
         }
         if (!apkFile.delete() || !temp.renameTo(apkFile)) {
-            // fallback copy
             try (FileInputStream in = new FileInputStream(temp); FileOutputStream out = new FileOutputStream(apkFile)) {
                 byte[] buf = new byte[65536];
                 int n;
@@ -180,14 +171,13 @@ public class ApkSignerPlugin extends Plugin {
             }
         }
 
-        // Generate new RSA-2048 key + self-signed cert (BouncyCastle)
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
         kpg.initialize(2048);
         KeyPair kp = kpg.generateKeyPair();
 
         long now = System.currentTimeMillis();
         Date notBefore = new Date(now - 86400000L);
-        Date notAfter = new Date(now + 3650L * 86400000L); // ~10 years
+        Date notAfter = new Date(now + 3650L * 86400000L);
 
         X500Name owner = new X500Name("CN=APK AI Studio, OU=Release, O=APK AI Studio, C=US");
         X509v3CertificateBuilder certBuilder = new JcaX509v3CertificateBuilder(
