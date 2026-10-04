@@ -6,6 +6,7 @@ import {
   InstalledAppInfo,
   canListInstalledApps,
   isNativeAndroid,
+  probePluginError,
 } from '../plugins/InstalledAppsPlugin';
 import {
   Smartphone,
@@ -63,10 +64,12 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
       setNativeOk(available);
       if (!available) {
         setApps([]);
+        const detail = await probePluginError();
         setListError(
-          isNativeAndroid()
-            ? 'پلاگین native در دسترس نیست. این نسخه را دوباره از GitHub Actions بسازید.'
-            : 'لیست برنامه‌های واقعی فقط داخل اپ اندروید کار می‌کند. از دکمه انتخاب فایل APK استفاده کنید.'
+          detail ||
+            (isNativeAndroid()
+              ? 'پلاگین native در دسترس نیست. APK را از آخرین بیلد GitHub Actions نصب کنید.'
+              : 'لیست برنامه‌های واقعی فقط داخل اپ اندروید کار می‌کند. از دکمه انتخاب فایل APK استفاده کنید.')
         );
         return;
       }
@@ -76,7 +79,9 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
       );
       setApps(sorted);
       if (sorted.length === 0) {
-        setListError('هیچ برنامه‌ای پیدا نشد. دسترسی QUERY_ALL_PACKAGES را در تنظیمات گوشی بررسی کنید.');
+        setListError(
+          'هیچ برنامه‌ای پیدا نشد. تیک «نمایش برنامه‌های سیستمی» را بزنید یا از انتخاب فایل APK استفاده کنید.'
+        );
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -116,7 +121,7 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
 
       if (!extracted.base64) {
         throw new Error(
-          'حجم این APK زیاد است و نتوانستیم آن را در حافظه بارگذاری کنیم. با ابزار APK Extractor فایل را به Downloads بفرستید و از دکمه «انتخاب فایل APK» استفاده کنید.'
+          'حجم این APK زیاد است. با ابزار APK Extractor فایل را به Downloads بفرستید و از دکمه «انتخاب فایل APK» استفاده کنید.'
         );
       }
 
@@ -132,7 +137,6 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
         (p, t) => setStatusText(t + ' (' + p + '%)')
       );
 
-      // Keep real package identity
       project.name = app.name;
       project.fileName = extracted.fileName || project.fileName;
 
@@ -188,7 +192,7 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
                 )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                لیست از PackageManager اندروید خوانده می‌شود — نه نمونهٔ پیش‌فرض
+                لیست از PackageManager اندروید خوانده می‌شود
               </p>
             </div>
           </div>
@@ -260,7 +264,7 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
           ) : listError && apps.length === 0 ? (
             <div className="py-10 px-4 text-center space-y-3">
               <Info className="w-8 h-8 text-amber-400 mx-auto" />
-              <p className="text-xs text-slate-300 leading-relaxed">{listError}</p>
+              <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{listError}</p>
               <p className="text-[11px] text-slate-500">
                 هنوز می‌توانید با دکمه بالا یک فایل APK از حافظه انتخاب کنید.
               </p>
