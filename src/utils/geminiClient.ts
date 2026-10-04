@@ -2,11 +2,9 @@
  * Unified Gemini client for APK AI Studio.
  * - Uses the user's personal API key (localStorage) when available
  * - Always targets the latest Gemini model only
- * - Works both in browser (Capacitor APK) and via optional local server proxy
  */
 
 const STORAGE_KEY = 'apkaistudio_gemini_api_key';
-/** Always use the latest flash model — no multi-model fallback list */
 const LATEST_MODEL = 'gemini-flash-latest';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -21,13 +19,10 @@ export function getStoredApiKey(): string {
 export function setStoredApiKey(key: string): void {
   try {
     const cleaned = key.trim();
-    if (cleaned) {
-      localStorage.setItem(STORAGE_KEY, cleaned);
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
+    if (cleaned) localStorage.setItem(STORAGE_KEY, cleaned);
+    else localStorage.removeItem(STORAGE_KEY);
   } catch {
-    // ignore storage errors
+    // ignore
   }
 }
 
@@ -47,9 +42,6 @@ export interface GeminiStatus {
   source?: 'user-key' | 'server' | 'none';
 }
 
-/**
- * Test connectivity. Prefers user key; falls back to local server status.
- */
 export async function checkGeminiStatus(): Promise<GeminiStatus> {
   const userKey = getStoredApiKey();
 
@@ -60,7 +52,7 @@ export async function checkGeminiStatus(): Promise<GeminiStatus> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: 'پینگ. فقط یک کلمه جواب بده: متصل' }] }],
+          contents: [{ role: 'user', parts: [{ text: 'پینگ. فقط یک کلمه: متصل' }] }],
           generationConfig: { maxOutputTokens: 16, temperature: 0 },
         }),
       });
@@ -103,7 +95,6 @@ export async function checkGeminiStatus(): Promise<GeminiStatus> {
     }
   }
 
-  // Fallback: ask local server (AI Studio / dev with env key)
   try {
     const res = await fetch('/api/gemini/status');
     if (res.ok) {
@@ -136,18 +127,9 @@ export interface GenerateOptions {
   maxOutputTokens?: number;
 }
 
-/**
- * Core generate call — always uses LATEST_MODEL only.
- * Uses user key from localStorage when present; otherwise tries local server endpoints.
- */
 export async function generateContent(options: GenerateOptions): Promise<string> {
   const userKey = getStoredApiKey();
-
-  if (userKey) {
-    return generateWithUserKey(userKey, options);
-  }
-
-  // No user key — try server proxy (dev / AI Studio)
+  if (userKey) return generateWithUserKey(userKey, options);
   throw new Error(
     'کلید Gemini یافت نشد. لطفاً از منوی تنظیمات، کلید API شخصی خود را وارد و ذخیره کنید.'
   );
@@ -172,9 +154,7 @@ async function generateWithUserKey(apiKey: string, options: GenerateOptions): Pr
   };
 
   if (options.systemInstruction) {
-    body.systemInstruction = {
-      parts: [{ text: options.systemInstruction }],
-    };
+    body.systemInstruction = { parts: [{ text: options.systemInstruction }] };
   }
 
   if (options.responseMimeType) {
@@ -199,28 +179,37 @@ async function generateWithUserKey(apiKey: string, options: GenerateOptions): Pr
     data?.candidates?.[0]?.content?.parts?.[0]?.text ||
     '';
 
-  if (!text) {
-    throw new Error('پاسخ خالی از مدل دریافت شد.');
-  }
-
+  if (!text) throw new Error('پاسخ خالی از مدل دریافت شد.');
   return text;
 }
 
-/** High-level chat helper used by AssistantView & AiCommandCard */
+const ASSISTANT_SYSTEM = `تو دستیار ارشد APK AI Studio هستی: مهندس اندروید، تحلیل‌گر امنیت و مشاور بهینه‌سازی اپ.
+همیشه فارسی، کوتاه، عملی و دقیق جواب بده.
+
+قوانین اجباری در هر پاسخ مرتبط با برنامه:
+1) اگر خطای امنیتی یا باگ در بافت APK هست، صریح بگو (مثلاً Cleartext، debuggable، allowBackup، مجوز خطرناک، کامپوننت export‌شده).
+2) حداقل ۲ پیشنهاد مشخص برای بهتر شدن بده (امنیت، حریم خصوصی، سازگاری SDK، حذف تبلیغات).
+3) اگر کاربر خواست اصلاح/بیلد، مراحل دقیق بگو: «اصلاح کن» → «بیلد کن» → ذخیره در Downloads → نصب.
+4) اگر اطلاعات کافی نیست، بگو چه چیزی کم است.
+5) از کلی‌گویی و مدل‌های دیگر نام نبر؛ فقط روی همین APK تمرکز کن.
+
+فرمت پیشنهادی وقتی تحلیل می‌کنی:
+❌ خطاها:
+⚠️ هشدارها:
+✨ پیشنهادها:
+👉 قدم بعدی:`;
+
 export async function geminiChat(
   messages: Array<{ role: string; content: string }>,
   apkContext: unknown
 ): Promise<string> {
   const userKey = getStoredApiKey();
 
-  // Prefer direct user-key path (works in APK)
   if (userKey) {
-    const systemInstruction = `تو یک مهندس ارشد اندروید، تحلیل‌گر باینری و متخصص امنیت اپلیکیشن هستی.
-همیشه به زبان فارسی، دقیق و کاربردی پاسخ بده.
-از کلی‌گویی پرهیز کن و بر اساس بافت APK پاسخ بده.
-
-بافت APK فعلی:
-${typeof apkContext === 'object' ? JSON.stringify(apkContext, null, 2) : String(apkContext || '')}`;
+    const systemInstruction =
+      ASSISTANT_SYSTEM +
+      '\n\nبافت APK فعلی:\n' +
+      (typeof apkContext === 'object' ? JSON.stringify(apkContext, null, 2) : String(apkContext || ''));
 
     const contents = messages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
@@ -230,11 +219,10 @@ ${typeof apkContext === 'object' ? JSON.stringify(apkContext, null, 2) : String(
     return generateWithUserKey(userKey, {
       contents,
       systemInstruction,
-      temperature: 0.4,
+      temperature: 0.35,
     });
   }
 
-  // Fallback to local server
   const res = await fetch('/api/gemini/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -250,7 +238,6 @@ ${typeof apkContext === 'object' ? JSON.stringify(apkContext, null, 2) : String(
   return data.reply || data.text || 'پاسخی دریافت نشد.';
 }
 
-/** Agent workflow helper */
 export async function geminiAgent(payload: {
   goal: string;
   apkSummary: unknown;
@@ -259,25 +246,18 @@ export async function geminiAgent(payload: {
 }): Promise<Record<string, unknown>> {
   const userKey = getStoredApiKey();
 
-  const prompt = `هدف کاربری: "${payload.goal}"
-وضعیت مرحله: ${payload.step || 'بررسی اولیه'}
-اطلاعات APK:
-${JSON.stringify(payload.apkSummary || {}, null, 2)}
+  const prompt = `هدف: "${payload.goal}"
+مرحله: ${payload.step || 'بررسی اولیه'}
+APK:\n${JSON.stringify(payload.apkSummary || {}, null, 2)}
+فایل‌ها:\n${(payload.filesList || []).slice(0, 30).join('\n')}
 
-لیست فایل‌های نمونه موجود در APK:
-${(payload.filesList || []).slice(0, 30).join('\n')}
-
-تو به عنوان Agent هوشمند اندروید باید یک برنامه عملیاتی منسجم برای حل این درخواست ایجاد کنی.
-خروجی باید یک ساختار JSON معتبر با کلیدهای زیر باشد:
+خروجی JSON:
 {
-  "finding": "شرح مشکل یا وضعیت فعلی شناسایی شده",
-  "affectedFile": "نام فایل مرتبط اصلی مانند AndroidManifest.xml یا کلاس مربوطه",
-  "proposedDiff": {
-    "before": "کد یا متن فعلی قبل از تغییر",
-    "after": "کد یا متن پیشنهادی بعد از اصلاح"
-  },
-  "explanation": "توضیح کامل فنی علت این تغییر و رفع مشکل",
-  "securityImpact": "اثر امنیتی این تغییر",
+  "finding": "...",
+  "affectedFile": "AndroidManifest.xml",
+  "proposedDiff": { "before": "...", "after": "..." },
+  "explanation": "...",
+  "securityImpact": "...",
   "canBuildDirectly": true
 }`;
 
@@ -287,7 +267,6 @@ ${(payload.filesList || []).slice(0, 30).join('\n')}
       temperature: 0.2,
       responseMimeType: 'application/json',
     });
-
     try {
       return JSON.parse(text);
     } catch {
@@ -307,37 +286,23 @@ ${(payload.filesList || []).slice(0, 30).join('\n')}
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
     throw new Error(errData.error || `خطای سرور: ${res.status}`);
   }
-
   return res.json();
 }
 
-/** Generic analysis helper */
 export async function geminiAnalyze(type: string, context: unknown, prompt?: string): Promise<string> {
   const userKey = getStoredApiKey();
-
-  const systemInstruction = `تو یک مهندس ارشد اندروید، تحلیل‌گر کدهای باینری، متخصص مهندسی معکوس قانونی و کارشناس امنیت اپلیکیشن هستی.
-وظیفه تو بررسی دقیق، موشکافانه و تخصصی APK، فایل‌های Manifest، مجوزها، کلاس‌های DEX و الگوهای امنیتی است.
-همیشه پاسخ‌ها را به زبان فارسی، ساختاریافته، دقیق و کاربردی ارائه بده.
-در صورت وجود آسیب‌پذیری یا نقص، دلیل فنی، ریسک و راه‌حل رفع آن را توضیح بده.
-از کلی‌گویی پرهیز کن و دقیقاً بر اساس اطلاعات ارائه شده تحلیل انجام بده.`;
-
-  const fullPrompt = `نوع درخواست: ${type || 'تحلیل عمومی'}
-اطلاعات و بافت APK:
-${typeof context === 'object' ? JSON.stringify(context, null, 2) : context}
-
-پرسش کاربر:
-${prompt || 'لطفاً تحلیل جامع، نکات امنیتی و ارزیابی معماری این بخش را ارائه کن.'}`;
+  const systemInstruction = ASSISTANT_SYSTEM;
+  const fullPrompt = `نوع: ${type || 'تحلیل'}\nبافت:\n${typeof context === 'object' ? JSON.stringify(context, null, 2) : context}\n\nپرسش:\n${prompt || 'تحلیل جامع با خطاها و پیشنهادها.'}`;
 
   if (userKey) {
     return generateWithUserKey(userKey, {
       contents: fullPrompt,
       systemInstruction,
-      temperature: 0.4,
+      temperature: 0.35,
     });
   }
 
@@ -346,12 +311,10 @@ ${prompt || 'لطفاً تحلیل جامع، نکات امنیتی و ارزی�
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, context, prompt }),
   });
-
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
     throw new Error(errData.error || `خطای سرور: ${res.status}`);
   }
-
   const data = await res.json();
   return data.text || 'پاسخی دریافت نشد.';
 }
