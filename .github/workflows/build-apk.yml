@@ -59,33 +59,60 @@ jobs:
           npx --yes @capacitor/cli@7 sync android 2>&1 || npx --yes @capacitor/cli@7 copy android 2>&1
           ls -la android/ || (echo "ERROR: android folder was not created" && exit 1)
 
-      - name: Inject InstalledApps native plugin
+      - name: Inject InstalledApps native plugin + register in MainActivity
         run: |
           set -e
-          PKG_DIR="android/app/src/main/java/com/apkaistudio/app"
-          mkdir -p "$PKG_DIR"
-          cp native/android/InstalledAppsPlugin.java "$PKG_DIR/InstalledAppsPlugin.java"
-          echo "Plugin Java copied to $PKG_DIR"
 
-          # Register plugin in MainActivity (Capacitor 7 style)
           MAIN=$(find android/app/src/main/java -name 'MainActivity.java' | head -1)
-          if [ -n "$MAIN" ]; then
-            if ! grep -q 'InstalledAppsPlugin' "$MAIN"; then
-              # Capacitor 7 auto-loads @CapacitorPlugin annotated classes via annotation processor
-              # Ensure package matches
-              echo "MainActivity found: $MAIN"
-            fi
+          if [ -z "$MAIN" ]; then
+            echo "ERROR: MainActivity.java not found"
+            find android/app/src/main -type f -name '*.java' || true
+            exit 1
           fi
+          echo "MainActivity: $MAIN"
+
+          # Detect package from MainActivity
+          PKG=$(grep -m1 '^package ' "$MAIN" | sed 's/package //;s/;//' | tr -d '[:space:]')
+          echo "Detected package: $PKG"
+          PKG_DIR=$(dirname "$MAIN")
+          mkdir -p "$PKG_DIR"
+
+          # Write plugin with matching package
+          sed "s/^package .*/package ${PKG};/" native/android/InstalledAppsPlugin.java > "$PKG_DIR/InstalledAppsPlugin.java"
+          echo "Plugin written to $PKG_DIR/InstalledAppsPlugin.java"
+          head -5 "$PKG_DIR/InstalledAppsPlugin.java"
+
+          # Overwrite MainActivity to register the plugin (Capacitor requires explicit registerPlugin)
+          cat > "$MAIN" << EOF
+          package ${PKG};
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              registerPlugin(InstalledAppsPlugin.class);
+              super.onCreate(savedInstanceState);
+            }
+          }
+          EOF
+          # Fix leading spaces from heredoc
+          sed -i 's/^          //' "$MAIN"
+          echo "--- MainActivity ---"
+          cat "$MAIN"
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
-            # Add QUERY_ALL_PACKAGES if missing (needed to see other apps on Android 11+)
             if ! grep -q 'QUERY_ALL_PACKAGES' "$MANIFEST"; then
-              sed -i 's|<manifest |<manifest |' "$MANIFEST"
-              # Insert permission before <application
-              sed -i 's|<application|<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.MAIN" />\n            <category android:name="android.intent.category.LAUNCHER" />\n        </intent>\n    </queries>\n    <application|' "$MANIFEST"
-              echo "Added QUERY_ALL_PACKAGES + queries to AndroidManifest"
+              sed -i 's|<application|<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.MAIN" />\n            <category android:name="android.intent.category.LAUNCHER" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n        </intent>\n    </queries>\n    <application|' "$MANIFEST"
+              # Ensure tools namespace on manifest root
+              if ! grep -q 'xmlns:tools' "$MANIFEST"; then
+                sed -i 's|xmlns:android="http://schemas.android.com/apk/res/android"|xmlns:android="http://schemas.android.com/apk/res/android"\n    xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              fi
+              echo "Added QUERY_ALL_PACKAGES + queries"
             fi
+            echo "--- AndroidManifest ---"
             cat "$MANIFEST"
           fi
 
