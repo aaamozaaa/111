@@ -59,6 +59,36 @@ jobs:
           npx --yes @capacitor/cli@7 sync android 2>&1 || npx --yes @capacitor/cli@7 copy android 2>&1
           ls -la android/ || (echo "ERROR: android folder was not created" && exit 1)
 
+      - name: Inject InstalledApps native plugin
+        run: |
+          set -e
+          PKG_DIR="android/app/src/main/java/com/apkaistudio/app"
+          mkdir -p "$PKG_DIR"
+          cp native/android/InstalledAppsPlugin.java "$PKG_DIR/InstalledAppsPlugin.java"
+          echo "Plugin Java copied to $PKG_DIR"
+
+          # Register plugin in MainActivity (Capacitor 7 style)
+          MAIN=$(find android/app/src/main/java -name 'MainActivity.java' | head -1)
+          if [ -n "$MAIN" ]; then
+            if ! grep -q 'InstalledAppsPlugin' "$MAIN"; then
+              # Capacitor 7 auto-loads @CapacitorPlugin annotated classes via annotation processor
+              # Ensure package matches
+              echo "MainActivity found: $MAIN"
+            fi
+          fi
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            # Add QUERY_ALL_PACKAGES if missing (needed to see other apps on Android 11+)
+            if ! grep -q 'QUERY_ALL_PACKAGES' "$MANIFEST"; then
+              sed -i 's|<manifest |<manifest |' "$MANIFEST"
+              # Insert permission before <application
+              sed -i 's|<application|<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.MAIN" />\n            <category android:name="android.intent.category.LAUNCHER" />\n        </intent>\n    </queries>\n    <application|' "$MANIFEST"
+              echo "Added QUERY_ALL_PACKAGES + queries to AndroidManifest"
+            fi
+            cat "$MANIFEST"
+          fi
+
       - name: Build Debug APK with Gradle
         run: |
           cd android
