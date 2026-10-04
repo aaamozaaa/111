@@ -1,9 +1,14 @@
 package com.apkaistudio.app;
 
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Base64;
 
 import com.getcapacitor.JSArray;
@@ -17,6 +22,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.List;
 
 @CapacitorPlugin(name = "InstalledApps")
@@ -50,7 +56,6 @@ public class InstalledAppsPlugin extends Plugin {
                 boolean isSystem = (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
                 if (isSystem && !includeSystem) continue;
 
-                // Skip ourselves
                 if (ai.packageName.equals(getContext().getPackageName())) continue;
 
                 CharSequence label = pm.getApplicationLabel(ai);
@@ -115,7 +120,7 @@ public class InstalledAppsPlugin extends Plugin {
 
             File src = new File(sourceDir);
             if (!src.exists()) {
-                call.reject("فایل APK روی دستگاه در دسترس نیست (ممکن است نیاز به دسترسی root باشد)");
+                call.reject("فایل APK روی دستگاه در دسترس نیست");
                 return;
             }
 
@@ -130,8 +135,7 @@ public class InstalledAppsPlugin extends Plugin {
             ret.put("fileName", safeName);
             ret.put("size", dest.length());
 
-            // Only embed base64 for smaller APKs (< 25MB) to avoid OOM
-            if (includeBase64 && dest.length() < 25L * 1024L * 1024L) {
+            if (includeBase64 && dest.length() < 40L * 1024L * 1024L) {
                 ret.put("base64", fileToBase64(dest));
             }
 
@@ -140,6 +144,91 @@ public class InstalledAppsPlugin extends Plugin {
             call.reject("برنامه یافت نشد: " + packageName, e);
         } catch (Exception e) {
             call.reject("خطا در استخراج APK: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Save base64 APK bytes into the public Downloads folder so the user can install it.
+     */
+    @PluginMethod
+    public void saveApkToDownloads(PluginCall call) {
+        String fileName = call.getString("fileName");
+        String base64 = call.getString("base64");
+
+        if (fileName == null || fileName.isEmpty()) {
+            call.reject("fileName الزامی است");
+            return;
+        }
+        if (base64 == null || base64.isEmpty()) {
+            call.reject("base64 الزامی است");
+            return;
+        }
+
+        // sanitize filename
+        fileName = fileName.replaceAll("[^a-zA-Z0-9._\-]", "_");
+        if (!fileName.toLowerCase().endsWith(".apk")) {
+            fileName = fileName + ".apk";
+        }
+
+        try {
+            byte[] data = Base64.decode(base64, Base64.DEFAULT);
+            String savedPath;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10+ MediaStore
+                ContentResolver resolver = getContext().getContentResolver();
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+                values.put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive");
+                values.put(MediaStore.Downloads.IS_PENDING, 1);
+
+                Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                Uri item = resolver.insert(collection, values);
+                if (item == null) {
+                    call.reject("نتوانستیم فایل را در Downloads ایجاد کنیم");
+                    return;
+                }
+
+                try (OutputStream out = resolver.openOutputStream(item)) {
+                    if (out == null) {
+                        call.reject("خروجی فایل باز نشد");
+                        return;
+                    }
+                    out.write(data);
+                    out.flush();
+                }
+
+                values.clear();
+                values.put(MediaStore.Downloads.IS_PENDING, 0);
+                resolver.update(item, values, null, null);
+                savedPath = "Downloads/" + fileName;
+            } else {
+                File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                if (!downloads.exists()) downloads.mkdirs();
+                File dest = new File(downloads, fileName);
+                try (FileOutputStream out = new FileOutputStream(dest)) {
+                    out.write(data);
+                    out.flush();
+                }
+                // notify media scanner
+                try {
+                    android.media.MediaScannerConnection.scanFile(
+                        getContext(),
+                        new String[]{ dest.getAbsolutePath() },
+                        new String[]{ "application/vnd.android.package-archive" },
+                        null
+                    );
+                } catch (Exception ignored) {}
+                savedPath = dest.getAbsolutePath();
+            }
+
+            JSObject ret = new JSObject();
+            ret.put("path", savedPath);
+            ret.put("fileName", fileName);
+            ret.put("size", data.length);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("خطا در ذخیره فایل: " + e.getMessage(), e);
         }
     }
 
