@@ -89,7 +89,7 @@ public class InstalledAppsPlugin extends Plugin {
             ret.put("apps", apps);
             call.resolve(ret);
         } catch (Exception e) {
-            call.reject("خطا در خواندن لیست برنامه‌ها: " + e.getMessage(), e);
+            call.reject("خطا در خواندن لیست برنامهها: " + e.getMessage(), e);
         }
     }
 
@@ -147,9 +147,6 @@ public class InstalledAppsPlugin extends Plugin {
         }
     }
 
-    /**
-     * Save base64 APK bytes into the public Downloads folder so the user can install it.
-     */
     @PluginMethod
     public void saveApkToDownloads(PluginCall call) {
         String fileName = call.getString("fileName");
@@ -164,8 +161,8 @@ public class InstalledAppsPlugin extends Plugin {
             return;
         }
 
-        // sanitize filename
-        fileName = fileName.replaceAll("[^a-zA-Z0-9._\-]", "_");
+        // hyphen at end of class — no backslash (Java illegal escape)
+        fileName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
         if (!fileName.toLowerCase().endsWith(".apk")) {
             fileName = fileName + ".apk";
         }
@@ -175,7 +172,6 @@ public class InstalledAppsPlugin extends Plugin {
             String savedPath;
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Android 10+ MediaStore
                 ContentResolver resolver = getContext().getContentResolver();
                 ContentValues values = new ContentValues();
                 values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
@@ -210,7 +206,6 @@ public class InstalledAppsPlugin extends Plugin {
                     out.write(data);
                     out.flush();
                 }
-                // notify media scanner
                 try {
                     android.media.MediaScannerConnection.scanFile(
                         getContext(),
