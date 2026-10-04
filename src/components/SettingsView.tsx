@@ -9,9 +9,20 @@ import {
   XCircle,
   Loader2,
   RefreshCw,
-  Info,
-  Server,
+  Key,
+  Eye,
+  EyeOff,
+  Save,
+  Trash2,
 } from 'lucide-react';
+import {
+  checkGeminiStatus,
+  getStoredApiKey,
+  setStoredApiKey,
+  clearStoredApiKey,
+  LATEST_MODEL,
+  type GeminiStatus,
+} from '../utils/geminiClient';
 
 interface SettingsViewProps {
   isDarkMode: boolean;
@@ -27,55 +38,141 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onToggleAiDataSharing,
 }) => {
   const [testingConnection, setTestingConnection] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<{
-    tested: boolean;
-    connected: boolean;
-    message: string;
-    model?: string;
-  }>({
-    tested: false,
+  const [connectionStatus, setConnectionStatus] = useState<GeminiStatus>({
+    configured: false,
     connected: false,
     message: 'وضعیت بررسی نشده است.',
   });
 
-  const checkConnection = async () => {
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showKey, setShowKey] = useState(false);
+  const [keySaved, setKeySaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const existing = getStoredApiKey();
+    if (existing) {
+      setApiKeyInput(existing);
+      setKeySaved(true);
+    }
+    runStatusCheck();
+  }, []);
+
+  const runStatusCheck = async () => {
     setTestingConnection(true);
     try {
-      const res = await fetch('/api/gemini/status');
-      const data = await res.json();
-      setConnectionStatus({
-        tested: true,
-        connected: data.connected,
-        message: data.message || (data.connected ? 'اتصال برقرار است.' : 'خطای اتصال'),
-        model: data.model,
-      });
+      const status = await checkGeminiStatus();
+      setConnectionStatus(status);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'خطای شبکه در اتصال به سرور';
+      const msg = err instanceof Error ? err.message : 'خطای شبکه';
       setConnectionStatus({
-        tested: true,
+        configured: false,
         connected: false,
         message: msg,
+        source: 'none',
       });
     } finally {
       setTestingConnection(false);
     }
   };
 
-  useEffect(() => {
-    checkConnection();
-  }, []);
+  const handleSaveKey = async () => {
+    setSaving(true);
+    try {
+      setStoredApiKey(apiKeyInput);
+      setKeySaved(!!apiKeyInput.trim());
+      await runStatusCheck();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClearKey = async () => {
+    clearStoredApiKey();
+    setApiKeyInput('');
+    setKeySaved(false);
+    await runStatusCheck();
+  };
 
   return (
     <div className="space-y-6 pb-12 max-w-4xl">
-      {/* Header */}
       <div>
         <h1 className="text-xl font-bold text-white tracking-tight">تنظیمات و حریم خصوصی (Settings)</h1>
         <p className="text-xs text-slate-400 mt-1">
-          پیکربندی هوش مصنوعی، حریم خصوصی محلی (Local-First)، تم ظاهری و اطلاعات قانونی اپلیکیشن.
+          پیکربندی کلید Gemini، حریم خصوصی محلی، تم ظاهری و اطلاعات برنامه.
         </p>
       </div>
 
-      {/* 1. Gemini AI Status */}
+      <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400">
+            <Key className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-white">کلید API شخصی Gemini</h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              کلید خود را از Google AI Studio بگیرید و اینجا ذخیره کنید. کلید فقط روی دستگاه شما نگه‌داری می‌شود.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="relative">
+            <input
+              type={showKey ? 'text' : 'password'}
+              value={apiKeyInput}
+              onChange={(e) => {
+                setApiKeyInput(e.target.value);
+                setKeySaved(false);
+              }}
+              placeholder="AIza..."
+              className="w-full px-4 py-2.5 pr-12 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50 font-mono"
+              dir="ltr"
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey((v) => !v)}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleSaveKey}
+              disabled={saving || !apiKeyInput.trim()}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              ذخیره کلید
+            </button>
+            {keySaved && (
+              <button
+                onClick={handleClearKey}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                حذف کلید
+              </button>
+            )}
+          </div>
+
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            کلید از{' '}
+            <a
+              href="https://aistudio.google.com/apikey"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-emerald-400 hover:underline"
+            >
+              aistudio.google.com/apikey
+            </a>{' '}
+            قابل دریافت است. فقط روی همین دستگاه ذخیره می‌شود و به سرور خارجی ارسال نمی‌گردد.
+          </p>
+        </div>
+      </div>
+
       <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -83,74 +180,85 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">سرویس هوش مصنوعی Gemini (اتصال خودکار به آخرین مدل)</h3>
+              <h3 className="text-sm font-semibold text-white">وضعیت اتصال به آخرین مدل Gemini</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                اتصال هوشمند به جدیدترین نسخه فعال Gemini بدون نیاز به انتخاب دستی مدل یا نسخه.
+                همیشه به مدل <span className="font-mono text-emerald-400">{LATEST_MODEL}</span> متصل می‌شود.
               </p>
             </div>
           </div>
 
           <button
-            onClick={checkConnection}
+            onClick={runStatusCheck}
             disabled={testingConnection}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 transition-colors cursor-pointer shrink-0"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-colors disabled:opacity-50"
           >
-            {testingConnection ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-            <span>تست اتصال</span>
+            {testingConnection ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+            تست اتصال
           </button>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2">
-            <Server className="w-4 h-4 text-slate-400 shrink-0" />
-            <span className="text-slate-300 font-medium">وضعیت اتصال:</span>
-            <span
-              className={`font-semibold flex items-center gap-1 ${
-                connectionStatus.connected ? 'text-emerald-400' : 'text-amber-400'
+        <div
+          className={`flex items-start gap-3 p-3.5 rounded-xl border ${
+            connectionStatus.connected
+              ? 'border-emerald-500/30 bg-emerald-500/5'
+              : connectionStatus.configured
+                ? 'border-amber-500/30 bg-amber-500/5'
+                : 'border-slate-700 bg-slate-950/50'
+          }`}
+        >
+          {connectionStatus.connected ? (
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+          ) : connectionStatus.configured ? (
+            <XCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          ) : (
+            <Lock className="w-5 h-5 text-slate-500 shrink-0 mt-0.5" />
+          )}
+          <div className="min-w-0">
+            <p
+              className={`text-sm font-medium ${
+                connectionStatus.connected
+                  ? 'text-emerald-300'
+                  : connectionStatus.configured
+                    ? 'text-amber-300'
+                    : 'text-slate-400'
               }`}
             >
-              {connectionStatus.connected ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>متصل به آخرین نسخه هوشمند (آماده کار)</span>
-                </>
-              ) : (
-                <>
-                  <XCircle className="w-3.5 h-3.5" />
-                  <span>{connectionStatus.message}</span>
-                </>
-              )}
-            </span>
+              {connectionStatus.connected
+                ? 'متصل'
+                : connectionStatus.configured
+                  ? 'پیکربندی شده — اتصال ناموفق'
+                  : 'کلید تنظیم نشده'}
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{connectionStatus.message}</p>
+            {connectionStatus.model && (
+              <p className="text-[11px] text-slate-500 mt-1 font-mono">مدل: {connectionStatus.model}</p>
+            )}
+            {connectionStatus.source && (
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                منبع: {connectionStatus.source === 'user-key' ? 'کلید شخصی شما' : connectionStatus.source === 'server' ? 'سرور' : '—'}
+              </p>
+            )}
           </div>
-
-          <span className="text-[11px] text-slate-400">
-            کلید API به صورت خودکار و امن از تنظیمات سرور تزریق می‌شود.
-          </span>
         </div>
       </div>
 
-      {/* 2. Privacy & Local-First Policy */}
       <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-sky-500/10 text-sky-400">
-            <Lock className="w-5 h-5" />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400">
+              <Shield className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-white">اشتراک داده با هوش مصنوعی</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                تنها متون و کدهایی که شما انتخاب می‌کنید جهت تحلیل به Gemini فرستاده می‌شوند.
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-sm font-semibold text-white">حریم خصوصی و پردازش درجا (Local-First)</h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              اصل اساسی: فایل باینری APK به هیچ عنوان به صورت کامل آپلود یا ذخیره نمی‌شود و تمام آنالیزها روی مرورگر انجام می‌گردد.
-            </p>
-          </div>
-        </div>
-
-        <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
-          <div>
-            <span className="font-semibold text-slate-200 block">ارسال داده به هوش مصنوعی</span>
-            <span className="text-slate-400 block mt-0.5">
-              تنها متون و کدهایی که شما انتخاب می‌کنید جهت تحلیل به Gemini فرستاده می‌شوند.
-            </span>
-          </div>
-
           <label className="relative inline-flex items-center cursor-pointer shrink-0 mr-4">
             <input
               type="checkbox"
@@ -163,7 +271,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* 3. Appearance */}
       <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -172,12 +279,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-semibold text-white">حالت تیره / روشن (Dark / Light Mode)</h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                تنظیم حالت نمایش متناسب با محیط و شرایط نوری.
-              </p>
+              <p className="text-xs text-slate-400 mt-0.5">تنظیم حالت نمایش متناسب با محیط و شرایط نوری.</p>
             </div>
           </div>
-
           <button
             onClick={onToggleDarkMode}
             className="px-3.5 py-1.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-colors cursor-pointer"
@@ -187,24 +291,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* 4. App Information & Legal Compliance */}
       <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-3 text-xs leading-relaxed text-slate-300">
         <div className="flex items-center gap-2 text-white font-semibold pb-2 border-b border-slate-800">
           <Shield className="w-4 h-4 text-emerald-400" />
           <span>مشخصات برنامه و قوانین استفاده قانونی</span>
         </div>
-
         <div className="grid grid-cols-2 gap-3 py-1 text-slate-400 font-mono">
-          <div>نام برنامه: <span className="text-white font-sans font-bold">APK AI Studio</span></div>
-          <div>نسخه: <span className="text-white">1.0.0</span></div>
-          <div>Package Name: <span className="text-white">com.apkaistudio.app</span></div>
-          <div>محیط اجرا: <span className="text-emerald-400">Android PWA / Web Native</span></div>
+          <div>
+            نام برنامه: <span className="text-white font-sans font-bold">APK AI Studio</span>
+          </div>
+          <div>
+            نسخه: <span className="text-white">1.1.0</span>
+          </div>
+          <div>
+            Package: <span className="text-white">com.apkaistudio.app</span>
+          </div>
+          <div>
+            مدل AI: <span className="text-emerald-400">{LATEST_MODEL}</span>
+          </div>
         </div>
-
-        <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
-          <strong className="text-slate-300 block mb-1">بیانیه رعایت امنیت و اخلاق حرفه‌ای:</strong>
-          این ابزار صرفاً برای تحلیل ساختار، ممیزی امنیتی، دیباگ و اصلاح قانونی فایل‌های APK طراحی شده است که کاربر مالک آنهاست یا اجازه تحلیل و توسعه آنها را دارد. هیچ قابلیت مخربی برای دور زدن لایسنس، حذف پرداخت‌های درون‌برنامه‌ای، شکستن DRM یا سرقت حساب کاربری در این برنامه تعبیه نشده است.
-        </div>
+        <p className="text-slate-500 pt-2">
+          این نرم‌افزار برای بررسی‌های امنیتی، تست نفوذ اخلاقی، بازبینی کد و مهندسی معکوس برنامه‌های مجاز توسعه داده شده
+          است. استفاده غیرقانونی ممنوع است.
+        </p>
       </div>
     </div>
   );
