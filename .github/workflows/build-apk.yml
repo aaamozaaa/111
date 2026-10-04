@@ -59,30 +59,23 @@ jobs:
           npx --yes @capacitor/cli@7 sync android 2>&1 || npx --yes @capacitor/cli@7 copy android 2>&1
           ls -la android/ || (echo "ERROR: android folder was not created" && exit 1)
 
-      - name: Inject InstalledApps native plugin + register in MainActivity
+      - name: Inject native plugins + apksig dependencies
         run: |
           set -e
 
           MAIN=$(find android/app/src/main/java -name 'MainActivity.java' | head -1)
           if [ -z "$MAIN" ]; then
             echo "ERROR: MainActivity.java not found"
-            find android/app/src/main -type f -name '*.java' || true
             exit 1
           fi
-          echo "MainActivity: $MAIN"
-
-          # Detect package from MainActivity
           PKG=$(grep -m1 '^package ' "$MAIN" | sed 's/package //;s/;//' | tr -d '[:space:]')
-          echo "Detected package: $PKG"
           PKG_DIR=$(dirname "$MAIN")
           mkdir -p "$PKG_DIR"
+          echo "Package: $PKG"
 
-          # Write plugin with matching package
           sed "s/^package .*/package ${PKG};/" native/android/InstalledAppsPlugin.java > "$PKG_DIR/InstalledAppsPlugin.java"
-          echo "Plugin written to $PKG_DIR/InstalledAppsPlugin.java"
-          head -5 "$PKG_DIR/InstalledAppsPlugin.java"
+          sed "s/^package .*/package ${PKG};/" native/android/ApkSignerPlugin.java > "$PKG_DIR/ApkSignerPlugin.java"
 
-          # Overwrite MainActivity to register the plugin (Capacitor requires explicit registerPlugin)
           cat > "$MAIN" << EOF
           package ${PKG};
 
@@ -93,27 +86,34 @@ jobs:
             @Override
             public void onCreate(Bundle savedInstanceState) {
               registerPlugin(InstalledAppsPlugin.class);
+              registerPlugin(ApkSignerPlugin.class);
               super.onCreate(savedInstanceState);
             }
           }
           EOF
-          # Fix leading spaces from heredoc
           sed -i 's/^          //' "$MAIN"
-          echo "--- MainActivity ---"
           cat "$MAIN"
+
+          # Add apksig + bouncycastle to app build.gradle
+          APP_GRADLE="android/app/build.gradle"
+          if [ -f "$APP_GRADLE" ]; then
+            if ! grep -q 'com.android.tools.build:apksig' "$APP_GRADLE"; then
+              # Insert dependencies before the last closing brace of dependencies block is hard;
+              # append a dependencies block addition after dependencies {
+              sed -i '/dependencies {/a\    implementation "com.android.tools.build:apksig:8.2.2"\n    implementation "org.bouncycastle:bcprov-jdk18on:1.78.1"\n    implementation "org.bouncycastle:bcpkix-jdk18on:1.78.1"' "$APP_GRADLE"
+              echo "Added apksig + bouncycastle to build.gradle"
+            fi
+            cat "$APP_GRADLE"
+          fi
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             if ! grep -q 'QUERY_ALL_PACKAGES' "$MANIFEST"; then
-              sed -i 's|<application|<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.MAIN" />\n            <category android:name="android.intent.category.LAUNCHER" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n        </intent>\n    </queries>\n    <application|' "$MANIFEST"
-              # Ensure tools namespace on manifest root
+              sed -i 's|<application|<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.MAIN" />\n            <category android:name="android.intent.category.LAUNCHER" />\n        </intent>\n    </queries>\n    <application|' "$MANIFEST"
               if ! grep -q 'xmlns:tools' "$MANIFEST"; then
                 sed -i 's|xmlns:android="http://schemas.android.com/apk/res/android"|xmlns:android="http://schemas.android.com/apk/res/android"\n    xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
               fi
-              echo "Added QUERY_ALL_PACKAGES + queries"
             fi
-            echo "--- AndroidManifest ---"
-            cat "$MANIFEST"
           fi
 
       - name: Build Debug APK with Gradle
@@ -133,4 +133,3 @@ jobs:
       - name: Notify Build Success
         run: |
           echo "✅ APK build completed successfully!"
-          echo "Download the APK from the Artifacts section of this workflow run."
