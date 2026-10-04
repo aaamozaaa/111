@@ -76,8 +76,8 @@ jobs:
           sed "s/^package .*/package ${PKG};/" native/android/InstalledAppsPlugin.java > "$PKG_DIR/InstalledAppsPlugin.java"
           sed "s/^package .*/package ${PKG};/" native/android/ApkSignerPlugin.java > "$PKG_DIR/ApkSignerPlugin.java"
 
-          cat > "$MAIN" << EOF
-          package ${PKG};
+          cat > "$MAIN" << 'MAINEOF'
+          package PLACEHOLDER_PKG;
 
           import android.os.Bundle;
           import com.getcapacitor.BridgeActivity;
@@ -90,19 +90,56 @@ jobs:
               super.onCreate(savedInstanceState);
             }
           }
-          EOF
+          MAINEOF
+          sed -i "s/PLACEHOLDER_PKG/${PKG}/" "$MAIN"
           sed -i 's/^          //' "$MAIN"
           cat "$MAIN"
 
-          # Add apksig + bouncycastle to app build.gradle
           APP_GRADLE="android/app/build.gradle"
           if [ -f "$APP_GRADLE" ]; then
             if ! grep -q 'com.android.tools.build:apksig' "$APP_GRADLE"; then
-              # Insert dependencies before the last closing brace of dependencies block is hard;
-              # append a dependencies block addition after dependencies {
               sed -i '/dependencies {/a\    implementation "com.android.tools.build:apksig:8.2.2"\n    implementation "org.bouncycastle:bcprov-jdk18on:1.78.1"\n    implementation "org.bouncycastle:bcpkix-jdk18on:1.78.1"' "$APP_GRADLE"
-              echo "Added apksig + bouncycastle to build.gradle"
+              echo "Added apksig + bouncycastle"
             fi
+
+            # Fix duplicate META-INF from BouncyCastle multi-release JARs
+            if ! grep -q 'META-INF/versions' "$APP_GRADLE"; then
+              # Insert packaging block inside android { after the opening
+              python3 << 'PY'
+          from pathlib import Path
+          p = Path("android/app/build.gradle")
+          text = p.read_text()
+          packaging = '''
+      packaging {
+          resources {
+              excludes += [
+                  "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+                  "META-INF/DEPENDENCIES",
+                  "META-INF/LICENSE",
+                  "META-INF/LICENSE.txt",
+                  "META-INF/license.txt",
+                  "META-INF/NOTICE",
+                  "META-INF/NOTICE.txt",
+                  "META-INF/notice.txt",
+                  "META-INF/*.SF",
+                  "META-INF/*.DSA",
+                  "META-INF/*.RSA",
+                  "META-INF/OSGI-INF/**"
+              ]
+              pickFirsts += ["META-INF/*"]
+          }
+      }
+          '''
+          if "packaging {" not in text:
+              # after android {
+              text = text.replace("android {", "android {" + packaging, 1)
+              p.write_text(text)
+              print("Added packaging excludes")
+          else:
+              print("packaging block already present")
+          PY
+            fi
+            echo "--- app/build.gradle ---"
             cat "$APP_GRADLE"
           fi
 
