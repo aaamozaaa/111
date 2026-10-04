@@ -7,7 +7,7 @@ const rootEl = document.getElementById('root');
 
 function clearAppData() {
   try {
-    const keys = [];
+    const keys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (k && k.startsWith('apkaistudio')) keys.push(k);
@@ -16,7 +16,9 @@ function clearAppData() {
   } catch {
     try {
       localStorage.clear();
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -52,7 +54,7 @@ class ErrorBoundary extends React.Component<
           }}
         >
           <h1 style={{ color: '#f87171', fontSize: 18, marginBottom: 12 }}>خطا در بارگذاری برنامه</h1>
-          <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 16 }}>s
+          <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 16 }}>
             دکمه زیر داده‌های خراب را پاک می‌کند و برنامه را از نو باز می‌کند.
           </p>
           <button
@@ -98,7 +100,6 @@ function boot() {
     return;
   }
 
-  // Visible shell so user never sees pure black while JS loads
   rootEl.innerHTML =
     '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#020617;color:#94a3b8;font-family:sans-serif;direction:rtl">در حال بارگذاری APK AI Studio...</div>';
 
