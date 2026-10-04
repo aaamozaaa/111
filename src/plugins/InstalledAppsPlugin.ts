@@ -7,27 +7,19 @@ export interface InstalledAppInfo {
   versionCode: number;
   isSystem: boolean;
   apkPath?: string;
-  /** Approximate size in bytes if available */
   sizeBytes?: number;
 }
 
 export interface ExtractApkResult {
-  /** Absolute path on device (native) */
   path: string;
-  /** File name e.g. com.example_v1.0.apk */
   fileName: string;
-  /** Size in bytes */
   size: number;
-  /** Base64 of APK — only for small APKs; large ones use path + read via native */
   base64?: string;
 }
 
 export interface InstalledAppsPlugin {
-  /** List user-installed (and optionally system) packages */
   getInstalledApps(options?: { includeSystem?: boolean }): Promise<{ apps: InstalledAppInfo[] }>;
-  /** Copy the APK of a package into app cache and return path + optional base64 */
   extractApk(options: { packageName: string; includeBase64?: boolean }): Promise<ExtractApkResult>;
-  /** Whether native listing is available */
   isAvailable(): Promise<{ available: boolean }>;
 }
 
@@ -46,16 +38,54 @@ const InstalledApps = registerPlugin<InstalledAppsPlugin>('InstalledApps', {
 });
 
 export function isNativeAndroid(): boolean {
-  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+  try {
+    return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+  } catch {
+    return false;
+  }
 }
 
+/**
+ * Probe whether the native InstalledApps plugin is actually registered.
+ * Tries isAvailable first, then a real getInstalledApps call as fallback.
+ */
 export async function canListInstalledApps(): Promise<boolean> {
   if (!isNativeAndroid()) return false;
   try {
     const r = await InstalledApps.isAvailable();
-    return !!r.available;
-  } catch {
+    if (r?.available) return true;
+  } catch (e) {
+    console.warn('InstalledApps.isAvailable failed', e);
+  }
+  // Fallback: some builds register the plugin but isAvailable stub fails
+  try {
+    const r = await InstalledApps.getInstalledApps({ includeSystem: false });
+    return Array.isArray(r?.apps);
+  } catch (e) {
+    console.warn('InstalledApps.getInstalledApps probe failed', e);
     return false;
+  }
+}
+
+export async function probePluginError(): Promise<string> {
+  if (!isNativeAndroid()) {
+    return 'این برنامه روی اندروید native اجرا نمی‌شود (پلتفرم: ' + Capacitor.getPlatform() + ')';
+  }
+  try {
+    await InstalledApps.isAvailable();
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('not implemented') || msg.includes('UNIMPLEMENTED') || msg.includes('"InstalledApps"')) {
+      return 'پلاگین InstalledApps در این APK ثبت نشده. APK را از آخرین بیلد GitHub Actions نصب کنید.';
+    }
+    return 'خطا: ' + msg;
+  }
+  try {
+    await InstalledApps.getInstalledApps({ includeSystem: false });
+    return '';
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return 'خطا در خواندن لیست: ' + msg;
   }
 }
 
