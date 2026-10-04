@@ -15,6 +15,8 @@ import {
   Copy,
   Loader2,
   AlertCircle,
+  Sparkles,
+  Smartphone,
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -25,6 +27,8 @@ interface ProjectsViewProps {
   onAddProject: (project: ApkProject, zip: JSZip | null) => void;
   onDeleteProject: (id: string) => void;
   onDuplicateProject: (id: string) => void;
+  onOpenAiForProject?: (id: string) => void;
+  onOpenInstalledApps?: () => void;
 }
 
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
@@ -34,6 +38,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   onAddProject,
   onDeleteProject,
   onDuplicateProject,
+  onOpenAiForProject,
+  onOpenInstalledApps,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isParsing, setIsParsing] = useState(false);
@@ -95,14 +101,26 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isParsing}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs transition-colors shadow-md shadow-emerald-500/20 cursor-pointer shrink-0 disabled:opacity-50"
-        >
-          {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-          <span>ورود فایل APK جدید</span>
-        </button>
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
+          {onOpenInstalledApps && (
+            <button
+              onClick={onOpenInstalledApps}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-emerald-500/20 cursor-pointer"
+            >
+              <Smartphone className="w-4 h-4" />
+              <span>📱 انتخاب از برنامه‌های نصب‌شده گوشی</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isParsing}
+            className="flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50"
+          >
+            {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            <span>ورود فایل APK از حافظه</span>
+          </button>
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -142,20 +160,46 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         </div>
       )}
 
-      {/* Upload Drag & Drop Zone */}
-      <div
-        onClick={() => fileInputRef.current?.click()}
-        className="rounded-2xl border-2 border-dashed border-slate-800 hover:border-emerald-500/50 bg-slate-900/30 hover:bg-slate-900/60 p-8 text-center transition-all cursor-pointer group"
-      >
-        <div className="w-12 h-12 rounded-2xl bg-slate-800/80 group-hover:bg-emerald-500/10 text-slate-400 group-hover:text-emerald-400 flex items-center justify-center mx-auto transition-colors">
-          <Upload className="w-6 h-6" />
+      {/* Add App Option Cards (Dual Mode: From Installed Apps OR Browse APK) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Option 1: Pick from installed apps on phone */}
+        <div
+          onClick={onOpenInstalledApps}
+          className="rounded-2xl border-2 border-emerald-500/40 hover:border-emerald-500 bg-gradient-to-b from-slate-900 via-slate-900/90 to-slate-950 p-6 text-center transition-all cursor-pointer group shadow-xl"
+        >
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform">
+            <Smartphone className="w-6 h-6" />
+          </div>
+          <h3 className="text-sm font-bold text-white mt-3 flex items-center justify-center gap-1.5">
+            <span>انتخاب از برنامه‌های نصب‌شده روی گوشی</span>
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+          </h3>
+          <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
+            استخراج فوری تلگرام، اینستاگرام، واتساپ، اسنپ، دیوار و سایر برنامه‌های دستگاه جهت اصلاح کدها و بیلد با دستیار AI.
+          </p>
+          <div className="mt-3 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full">
+            <span>استخراج آنی و اصلاح با هوش مصنوعی</span>
+          </div>
         </div>
-        <h3 className="text-sm font-semibold text-white mt-3">
-          انتخاب یا رها کردن فایل APK از حافظه دستگاه
-        </h3>
-        <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-          فایل APK به صورت کاملاً لوکال (Local-First) درون محیط برنامه تحلیل می‌شود و فایل اصلی بدون اجازه تغییر نمی‌کند.
-        </p>
+
+        {/* Option 2: Upload APK from storage */}
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className="rounded-2xl border-2 border-dashed border-slate-800 hover:border-slate-700 bg-slate-900/30 hover:bg-slate-900/60 p-6 text-center transition-all cursor-pointer group"
+        >
+          <div className="w-12 h-12 rounded-2xl bg-slate-800/80 group-hover:bg-slate-800 text-slate-400 group-hover:text-slate-200 flex items-center justify-center mx-auto transition-colors">
+            <Upload className="w-6 h-6" />
+          </div>
+          <h3 className="text-sm font-semibold text-white mt-3">
+            انتخاب یا رها کردن فایل APK از حافظه دستگاه
+          </h3>
+          <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
+            انتخاب فایل APK موجود در پوشه Downloads یا حافظه داخلی با تجزیه مستقیم و کامپایل مجدد.
+          </p>
+          <div className="mt-3 inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 bg-slate-800/60 px-3 py-1 rounded-full">
+            <span>پشتیبانی از انواع فایل‌های APK</span>
+          </div>
+        </div>
       </div>
 
       {/* Projects List Grid */}
@@ -209,6 +253,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   </span>
 
                   <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => {
+                        onSelectProject(proj.id);
+                        onOpenAiForProject?.(proj.id);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-medium cursor-pointer transition-colors"
+                      title="شروع دستور و چت با هوش مصنوعی درباره این برنامه"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>دستور به AI</span>
+                    </button>
                     <button
                       onClick={() => onDuplicateProject(proj.id)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer transition-colors"

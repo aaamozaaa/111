@@ -1,5 +1,6 @@
 import React from 'react';
 import { ApkProject } from '../types/apk';
+import { AiCommandCard } from './AiCommandCard';
 import {
   ShieldCheck,
   AlertTriangle,
@@ -13,18 +14,31 @@ import {
   Lock,
   Download,
   Terminal,
+  Smartphone,
 } from 'lucide-react';
 
 interface DashboardViewProps {
   project: ApkProject;
   onNavigate: (tab: string) => void;
   onExportApk: () => void;
+  onOpenDexPatcher?: () => void;
+  onOpenAdStripper?: () => void;
+  onOpenAssetExtractor?: () => void;
+  onOpenGitHubWorkflow?: () => void;
+  onApplyHardening?: () => void;
+  onOpenInstalledApps?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   project,
   onNavigate,
   onExportApk,
+  onOpenDexPatcher,
+  onOpenAdStripper,
+  onOpenAssetExtractor,
+  onOpenGitHubWorkflow,
+  onApplyHardening,
+  onOpenInstalledApps,
 }) => {
   const { manifest, securityReport, dexInfo } = project;
   const score = securityReport.score;
@@ -65,7 +79,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            {onOpenInstalledApps && (
+              <button
+                onClick={onOpenInstalledApps}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 transition-colors cursor-pointer"
+                title="انتخاب و استخراج از برنامه‌های نصب شده روی گوشی"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>نصب‌شده‌های گوشی</span>
+              </button>
+            )}
             <button
               onClick={() => onNavigate('agent')}
               className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 transition-all shadow-md shadow-emerald-500/20 cursor-pointer"
@@ -96,7 +120,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 2. Key Metrics Grid */}
+      {/* 2. Interactive AI Command Center (Instant Chat with App Awareness) */}
+      <AiCommandCard
+        project={project}
+        onNavigate={onNavigate}
+        onExportApk={onExportApk}
+        onApplyHardening={onApplyHardening}
+        onOpenAdStripper={onOpenAdStripper}
+        onOpenDexPatcher={onOpenDexPatcher}
+        onOpenInstalledApps={onOpenInstalledApps}
+      />
+
+      {/* 3. Key Metrics Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 md:gap-4">
         {/* Metric 1: Security Score */}
         <div
@@ -182,7 +217,105 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 3. Quick Action Hub */}
       <div>
-        <h2 className="text-sm font-semibold text-white mb-3">دسترسی سریع به ماژول‌های تحلیل</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-white">ابزارهای پیشرفته مهندسی معکوس و اصلاح (Advanced APK Tools)</h2>
+          <span className="text-[11px] text-emerald-400 font-medium">مجهز به انکودر باینری AXML و امضای چندگانه v1+v2</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Tool 1: DEX Patcher */}
+          <button
+            onClick={onOpenDexPatcher}
+            className="flex flex-col gap-2 p-3.5 rounded-xl border border-purple-500/30 bg-purple-950/20 hover:bg-purple-900/30 hover:border-purple-500/50 text-right transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400 group-hover:scale-110 transition-transform">
+                <Cpu className="w-5 h-5" />
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono">DEX Patcher</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-1 text-xs font-bold text-white">
+                <span>پچ رشته‌ها و آدرس‌های DEX</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-purple-400" />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                تغییر زنده API URLs، دامنه‌ها و رشته‌های متنی بدون نیاز به کامپایل مجدد با تصحیح Adler32.
+              </p>
+            </div>
+          </button>
+
+          {/* Tool 2: Ad & Tracker Stripper */}
+          <button
+            onClick={onOpenAdStripper}
+            className="flex flex-col gap-2 p-3.5 rounded-xl border border-rose-500/30 bg-rose-950/20 hover:bg-rose-900/30 hover:border-rose-500/50 text-right transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <div className="p-2 rounded-lg bg-rose-500/20 text-rose-400 group-hover:scale-110 transition-transform">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono">Ad Stripper</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-1 text-xs font-bold text-white">
+                <span>حذف تبلیغات و ردیاب‌ها</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-rose-400" />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                شناسایی و حذف خودکار AdMob، یونیتی، فیس‌بوک، اپ‌لاوین و دسترسی AD_ID با ۱ کلیک.
+              </p>
+            </div>
+          </button>
+
+          {/* Tool 3: Asset & Media Extractor */}
+          <button
+            onClick={onOpenAssetExtractor}
+            className="flex flex-col gap-2 p-3.5 rounded-xl border border-teal-500/30 bg-teal-950/20 hover:bg-teal-900/30 hover:border-teal-500/50 text-right transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <div className="p-2 rounded-lg bg-teal-500/20 text-teal-400 group-hover:scale-110 transition-transform">
+                <Box className="w-5 h-5" />
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 font-mono">Asset ZIP</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-1 text-xs font-bold text-white">
+                <span>استخراج مدیا و دارایی‌ها</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-teal-400" />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                دانلود یکجای تصاویر، آیکون‌های وکتور، فونت‌ها و صداهای داخل بسته در فایل ZIP.
+              </p>
+            </div>
+          </button>
+
+          {/* Tool 4: GitHub Actions APK Builder */}
+          <button
+            onClick={onOpenGitHubWorkflow}
+            className="flex flex-col gap-2 p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-950/20 hover:bg-emerald-900/30 hover:border-emerald-500/50 text-right transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 group-hover:scale-110 transition-transform">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">GitHub CI/CD</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-1 text-xs font-bold text-white">
+                <span>بیلد خودکار APK در گیت‌هاب</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                پایپ‌لاین کامل GitHub Actions برای کامپایل و دانلود رایگان فایل نهایی APK در گیت‌هاب.
+              </p>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* 4. Analysis Modules Grid */}
+      <div>
+        <h2 className="text-sm font-semibold text-white mb-3">ماژول‌های تحلیل و مهندسی معکوس</h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <button
             onClick={() => onNavigate('security')}

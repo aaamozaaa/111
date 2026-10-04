@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ApkProject } from '../types/apk';
+import { buildRichApkContext } from '../utils/apkContextHelper';
 import {
   Sparkles,
   Send,
@@ -51,6 +52,20 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setMessages([
+      {
+        id: `welcome_${project.id}`,
+        role: 'assistant',
+        content: `سلام! من دستیار هوشمند و تحلیل‌گر تخصصی **APK AI Studio** هستم.
+پروژه فعال شما: **${project.name}** (${project.manifest.packageName}) با امتیاز امنیت **${project.securityReport.score}/100** و **${project.manifest.permissions.length} مجوز درخواستی**.
+
+من به تمامی اطلاعات، مانیفست، دسترسی‌ها و آسیب‌پذیری‌های این برنامه دسترسی دارم. چه دستوری برای بررسی یا تغییرات دارید؟`,
+        timestamp: Date.now(),
+      },
+    ]);
+  }, [project.id]);
+
+  useEffect(() => {
     if (initialPrompt) {
       setInputPrompt(initialPrompt);
       onClearInitialPrompt?.();
@@ -77,27 +92,8 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     setIsSending(true);
 
     try {
-      // Build context payload
-      const apkContext: any = {
-        packageName: project.manifest.packageName,
-        versionName: project.manifest.versionName,
-        versionCode: project.manifest.versionCode,
-        minSdkVersion: project.manifest.minSdkVersion,
-        targetSdkVersion: project.manifest.targetSdkVersion,
-        securityScore: project.securityReport.score,
-        permissionsCount: project.manifest.permissions.length,
-        activitiesCount: project.manifest.activities.length,
-      };
-
-      if (selectedContext === 'manifest') {
-        apkContext.manifestSnippet = project.manifest.rawXmlText.substring(0, 3000);
-      } else if (selectedContext === 'security') {
-        apkContext.findings = project.securityReport.findings.map((f) => ({
-          title: f.titleFa,
-          desc: f.descriptionFa,
-          impact: f.impactFa,
-        }));
-      }
+      // Build full rich context payload
+      const apkContext = buildRichApkContext(project);
 
       const res = await fetch('/api/gemini/chat', {
         method: 'POST',

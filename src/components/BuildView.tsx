@@ -20,6 +20,7 @@ interface BuildViewProps {
   zip: JSZip | null;
   onAddLog: (type: any, message: string) => void;
   onAskAiAboutError?: (errMessage: string) => void;
+  onOpenGitHubWorkflow?: () => void;
 }
 
 export const BuildView: React.FC<BuildViewProps> = ({
@@ -27,6 +28,7 @@ export const BuildView: React.FC<BuildViewProps> = ({
   zip,
   onAddLog,
   onAskAiAboutError,
+  onOpenGitHubWorkflow,
 }) => {
   const [isBuilding, setIsBuilding] = useState(false);
   const [progress, setProgress] = useState({ percent: 0, text: '' });
@@ -190,6 +192,40 @@ export const BuildView: React.FC<BuildViewProps> = ({
             </div>
           </div>
         )}
+
+        {/* Feature Badges */}
+        <div className="pt-2 flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-400">
+          <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            ✓ امضای دوگانه Scheme v1 (JAR) + Scheme v2 (بلاک 0x7109871a)
+          </span>
+          <span className="px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20">
+            ✓ کامپایل منیفست به فرمت باینری استاندارد AXML
+          </span>
+          <span className="px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
+            ✓ سازگار با نصب در اندرویدهای ۱۰، ۱۱، ۱۲، ۱۳، ۱۴ و ۱۵
+          </span>
+        </div>
+      </div>
+
+      {/* GitHub Actions Cloud Build Card */}
+      <div className="p-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
+            <Sparkles className="w-6 h-6" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-white">تبدیل خودکار به APK در GitHub Actions (ابری)</h4>
+            <p className="text-xs text-slate-400 mt-0.5">
+              هنگام انتشار کدها در گیت‌هاب، فایل APK این برنامه به صورت خودکار با Gradle ساخته شده و در Artifacts قرار می‌گیرد.
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={onOpenGitHubWorkflow}
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shrink-0 cursor-pointer transition-colors"
+        >
+          راهنمای بیلد گیت‌هاب
+        </button>
       </div>
 
       {/* Build Error Card */}

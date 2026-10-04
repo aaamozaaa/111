@@ -167,20 +167,43 @@ app.post('/api/gemini/chat', async (req: Request, res: Response) => {
 
     const { messages, apkContext } = req.body;
 
-    const systemInstruction = `تو «دستیار هوشمند APK AI Studio» هستی؛ یک متخصص امنیت اندروید، دیباگ، معماری و ساختار فایل‌های APK.
-اطلاعات پروژه فعال کاربر:
-- نام پکیج: ${apkContext?.packageName || 'نامشخص'}
-- نسخه: ${apkContext?.versionName || 'نامشخص'} (${apkContext?.versionCode || '-'})
-- تارگت SDK: ${apkContext?.targetSdkVersion || '-'} (حداقل: ${apkContext?.minSdkVersion || '-'})
-- تعداد مجوزها: ${apkContext?.permissionsCount || 0}
-- تعداد اکتیویتی‌ها: ${apkContext?.activitiesCount || 0}
-- امتیاز امنیتی: ${apkContext?.securityScore || '-'} / 100
+    const permissionsText = Array.isArray(apkContext?.permissions)
+      ? apkContext.permissions.join(', ')
+      : 'ثبت نشده';
 
-دستورالعمل‌ها:
-1. همیشه به زبان فارسی سلیس و فنی پاسخ بده.
-2. اگر کاربر درباره فایل یا کلاسی پرسید، در صورت امکان نام دقیق فایل و پکیج را در پاسخ ذکر کن.
-3. راهکارهای اصلاحی باید مطابق با استانداردهای مدرن اندروید (Android 14+, Material 3, Jetpack) باشند.
-4. اگر باینری یا کد آسیب‌پذیری دارد، خطر آن را توضیح داده و کد یا راهکار امن را ارائه کن.`;
+    const findingsText = Array.isArray(apkContext?.findings) && apkContext.findings.length > 0
+      ? apkContext.findings.map((f: any) => `- [${f.severity || 'خطر'}] ${f.title}: ${f.desc || ''}`).join('\n')
+      : 'آسیب‌پذیری بحرانی ثبت نشده است.';
+
+    const trackersText = Array.isArray(apkContext?.trackers) && apkContext.trackers.length > 0
+      ? apkContext.trackers.map((t: any) => `${t.name} (${t.category})`).join(', ')
+      : 'ردیاب تبلیغاتی فعالی یافت نشد.';
+
+    const systemInstruction = `تو «دستیار ارشد و ایجنت هوشمند APK AI Studio» هستی؛ یک متخصص امنیت اندروید، دیباگ، مهندسی معکوس و تحلیل ساختار فایل‌های APK.
+
+کاربر هم‌اکنون این برنامه را انتخاب یا اضافه کرده است و مستقیماً دارد در مورد همین برنامه با تو صحبت می‌کند:
+- نام برنامه: ${apkContext?.appName || apkContext?.name || 'نامشخص'}
+- نام پکیج: ${apkContext?.packageName || 'نامشخص'}
+- نسخه برنامه: ${apkContext?.versionName || '1.0'} (کد نسخه: ${apkContext?.versionCode || '-'})
+- تارگت SDK: ${apkContext?.targetSdkVersion || '-'} (حداقل SDK پشتیبانی‌شده: ${apkContext?.minSdkVersion || '-'})
+- امتیاز امنیت برنامه: ${apkContext?.securityScore ?? 'نامشخص'}/100 (درجه کیفی: ${apkContext?.securityGrade || '-'})
+- تنظیمات امنیتی کلیدی منیفست:
+  * ترافیک بدون رمزنگاری (usesCleartextTraffic): ${apkContext?.usesCleartextTraffic ? 'فعال (خطر شنود ترافیک HTTP)' : 'غیرفعال (ایمن - فقط HTTPS)'}
+  * امکان بک‌آپ‌گیری (allowBackup): ${apkContext?.allowBackup ? 'فعال (خطر استخراج داده با ADB)' : 'غیرفعال (ایمن)'}
+  * حالت دیباگ (debuggable): ${apkContext?.debuggable ? 'فعال (خطر اتصال دیباگر)' : 'غیرفعال (ایمن)'}
+- لیست مجوزها (${apkContext?.permissionsCount || 0} مورد):
+  ${permissionsText}
+- آسیب‌پذیری‌های امنیتی شناسایی شده:
+  ${findingsText}
+- ردیاب‌ها و سرویس‌های تبلیغاتی:
+  ${trackersText}
+- کلاس‌های باینری DEX:
+  ${Array.isArray(apkContext?.classesSample) ? apkContext.classesSample.slice(0, 15).join(', ') : ''}
+
+دستورالعمل‌های پاسخ‌دهی:
+1. تو دقیقاً با جزئیات این برنامه که در بالا آمده آشنایی کامل داری. وقتی کاربر می‌گوید «این برنامه»، «مشکلاتش»، «تبلیغاتش رو حذف کن»، «کدهاش چیه» یا «امن کن»، منظورش دقیقاً همین برنامه و اطلاعات بالا است.
+2. همیشه پاسخ‌ها را به زبان فارسی، فنی، با اعتماد به نفس، کوتاه و ساختاریافته ارائه بده.
+3. اگر کاربر دستوری برای ایمن‌سازی یا اصلاح برنامه داد (مثلاً بستن Cleartext، حذف مجوز خطرناک، حذف تبلیغات)، تغییرات دقیق XML را توضیح بده و به کاربر یادآوری کن که دکمه‌های «پچ امنیتی خودکار» و «ساخت و امضای APK» در صفحه فعال هستند تا بلافاصله تغییرات اعمال شوند.`;
 
     // Convert client chat history to format suitable for gemini
     const contents: any[] = [];

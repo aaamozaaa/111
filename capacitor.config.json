@@ -1,0 +1,9 @@
+{
+  "appId": "com.apkaistudio.app",
+  "appName": "APK AI Studio",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

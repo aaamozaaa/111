@@ -15,6 +15,11 @@ import { LogsView } from './components/LogsView';
 import { SettingsView } from './components/SettingsView';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { DexPatcherModal } from './components/DexPatcherModal';
+import { AdTrackerModal } from './components/AdTrackerModal';
+import { AssetExtractorModal } from './components/AssetExtractorModal';
+import { GitHubWorkflowModal } from './components/GitHubWorkflowModal';
+import { InstalledAppsModal } from './components/InstalledAppsModal';
 import {
   Home,
   FolderOpen,
@@ -31,6 +36,7 @@ import {
   Menu,
   X,
   Layers,
+  Smartphone,
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -55,6 +61,13 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [activeZip, setActiveZip] = useState<JSZip | null>(null);
   const [assistantInitialPrompt, setAssistantInitialPrompt] = useState<string>('');
+
+  // Modals for Advanced Features
+  const [showDexPatcher, setShowDexPatcher] = useState<boolean>(false);
+  const [showAdTracker, setShowAdTracker] = useState<boolean>(false);
+  const [showAssetExtractor, setShowAssetExtractor] = useState<boolean>(false);
+  const [showGitHubWorkflow, setShowGitHubWorkflow] = useState<boolean>(false);
+  const [showInstalledApps, setShowInstalledApps] = useState<boolean>(false);
 
   // Settings
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -271,6 +284,48 @@ export default function App() {
     addLogToActiveProject('change', `پچ خودکار هوش مصنوعی در ${filePath} اعمال شد.`);
   };
 
+  const handleApplyDexPatch = (filePath: string, patchedBuffer: ArrayBuffer, summary: string) => {
+    const changeRec: ApkChangeRecord = {
+      id: `chg_${Date.now()}`,
+      timestamp: Date.now(),
+      filePath,
+      before: 'DEX Bytecode Original',
+      after: 'DEX Bytecode Patched',
+      status: 'applied',
+      author: 'user',
+      descriptionFa: summary,
+    };
+
+    setProjects((prev) =>
+      prev.map((p) => {
+        if (p.id === activeProjectId) {
+          return {
+            ...p,
+            changes: [changeRec, ...p.changes],
+            updatedAt: Date.now(),
+          };
+        }
+        return p;
+      })
+    );
+    addLogToActiveProject('change', summary);
+  };
+
+  const handleApplyAdStrip = (cleanedXml: string, removedCount: number) => {
+    handleSaveManifestEdit(cleanedXml);
+    addLogToActiveProject('change', `پاک‌سازی و حذف ${removedCount} ردپای تبلیغاتی و دسترسی AD_ID`);
+  };
+
+  const handleApplyAutoHardening = () => {
+    let updatedXml = activeProject.manifest.rawXmlText;
+    updatedXml = updatedXml.replace(/android:usesCleartextTraffic="true"/g, 'android:usesCleartextTraffic="false"');
+    updatedXml = updatedXml.replace(/android:allowBackup="true"/g, 'android:allowBackup="false"');
+    updatedXml = updatedXml.replace(/android:debuggable="true"/g, 'android:debuggable="false"');
+
+    handleSaveManifestEdit(updatedXml);
+    addLogToActiveProject('security', 'پچ امنیتی خودکار: بستن Cleartext و allowBackup و حالت دیباگ');
+  };
+
   // Nav actions from child views
   const handleAskAiAboutComponent = (name: string, type: string) => {
     setAssistantInitialPrompt(`لطفاً نقش، معماری و کاربرد ${type} با نام ${name} را در این اپلیکیشن توضیح بده.`);
@@ -370,8 +425,18 @@ ${errMessage}`);
           ))}
         </nav>
 
-        {/* Zone 3: Primary Actions (Project selector & PWA Install Button) */}
+        {/* Zone 3: Primary Actions (Installed Apps Button, Project selector & PWA Install Button) */}
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowInstalledApps(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-emerald-500/20 cursor-pointer"
+            title="انتخاب و استخراج مستقیم از برنامه‌های نصب‌شده روی دستگاه"
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">نصب‌شده‌های گوشی</span>
+            <span className="sm:hidden">گوشی</span>
+          </button>
+
           {/* Active project pill selector */}
           <button
             onClick={() => setActiveTab('projects')}
@@ -441,6 +506,12 @@ ${errMessage}`);
             project={activeProject}
             onNavigate={(tab) => setActiveTab(tab)}
             onExportApk={() => setActiveTab('build')}
+            onOpenDexPatcher={() => setShowDexPatcher(true)}
+            onOpenAdStripper={() => setShowAdTracker(true)}
+            onOpenAssetExtractor={() => setShowAssetExtractor(true)}
+            onOpenGitHubWorkflow={() => setShowGitHubWorkflow(true)}
+            onApplyHardening={handleApplyAutoHardening}
+            onOpenInstalledApps={() => setShowInstalledApps(true)}
           />
         )}
 
@@ -452,6 +523,11 @@ ${errMessage}`);
             onAddProject={handleAddProject}
             onDeleteProject={handleDeleteProject}
             onDuplicateProject={handleDuplicateProject}
+            onOpenAiForProject={(id) => {
+              setActiveProjectId(id);
+              setActiveTab('dashboard');
+            }}
+            onOpenInstalledApps={() => setShowInstalledApps(true)}
           />
         )}
 
@@ -510,6 +586,7 @@ ${errMessage}`);
             zip={activeZip}
             onAddLog={addLogToActiveProject}
             onAskAiAboutError={handleAskAiAboutError}
+            onOpenGitHubWorkflow={() => setShowGitHubWorkflow(true)}
           />
         )}
 
@@ -540,6 +617,44 @@ ${errMessage}`);
           />
         )}
       </main>
+
+      {/* Advanced Feature Modals */}
+      <DexPatcherModal
+        project={activeProject}
+        baseZip={activeZip}
+        isOpen={showDexPatcher}
+        onClose={() => setShowDexPatcher(false)}
+        onApplyPatch={handleApplyDexPatch}
+      />
+
+      <AdTrackerModal
+        project={activeProject}
+        isOpen={showAdTracker}
+        onClose={() => setShowAdTracker(false)}
+        onApplyStrip={handleApplyAdStrip}
+      />
+
+      <AssetExtractorModal
+        baseZip={activeZip}
+        projectName={activeProject.name}
+        isOpen={showAssetExtractor}
+        onClose={() => setShowAssetExtractor(false)}
+      />
+
+      <GitHubWorkflowModal
+        isOpen={showGitHubWorkflow}
+        onClose={() => setShowGitHubWorkflow(false)}
+      />
+
+      <InstalledAppsModal
+        isOpen={showInstalledApps}
+        onClose={() => setShowInstalledApps(false)}
+        onSelectProject={(newProj, zip) => {
+          handleAddProject(newProj, zip);
+          setActiveProjectId(newProj.id);
+          setActiveTab('dashboard');
+        }}
+      />
 
       {/* 3. MOBILE THUMB-ZONE BOTTOM NAVIGATION (Pattern 1 from mobile design reference) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-2 py-1 flex items-center justify-around">
