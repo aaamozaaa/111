@@ -28,23 +28,21 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
       - name: Accept Android SDK Licenses
         run: |
           mkdir -p $ANDROID_HOME/licenses
           echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
           echo -e "\n84831b9409646f786cece7ee481bcd849f481232" > $ANDROID_HOME/licenses/android-sdk-preview-license
-          echo -e "\nd56f5187479451eabf01fb78af67798781deaa9" > $ANDROID_HOME/licenses/android-sdk-license || true
-          echo -e "\n601085b94cd77f0b54ff86406957099ebe79c4d6" > $ANDROID_HOME/licenses/android-googletv-license || true
-          echo -e "\n33b6a2b64607f11b759f320ef9dff4ae5c47d97a" > $ANDROID_HOME/licenses/google-gdk-license || true
-          echo -e "\ne9acab5b5f4428c8b3d32c16d4f0d3c4" > $ANDROID_HOME/licenses/mips-android-sysimage-license || true
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
 
-      - name: Install required Android SDK packages
+      - name: Install Android SDK Platforms & Build-Tools
         run: |
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || \
-          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" || \
+          sdkmanager "platforms;android-33" "build-tools;33.0.2" || true
 
       - name: Install npm Dependencies
         run: |
@@ -53,14 +51,13 @@ jobs:
       - name: Build Web Application (Vite)
         run: |
           npm run build
-          ls -la dist/ || echo "dist folder missing after build"
+          ls -la dist/ || echo "WARNING: dist folder missing after build"
 
       - name: Add Android Platform with Capacitor
         run: |
-          # Install CLI if needed and create android project
           npx --yes @capacitor/cli@7 add android 2>&1 || echo "Android platform may already exist"
           npx --yes @capacitor/cli@7 sync android 2>&1 || npx --yes @capacitor/cli@7 copy android 2>&1
-          ls -la android/ || echo "android folder check"
+          ls -la android/ || (echo "ERROR: android folder was not created" && exit 1)
 
       - name: Build Debug APK with Gradle
         run: |
