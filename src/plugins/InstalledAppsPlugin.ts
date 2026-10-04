@@ -17,10 +17,17 @@ export interface ExtractApkResult {
   base64?: string;
 }
 
+export interface SaveApkResult {
+  path: string;
+  fileName: string;
+  size: number;
+}
+
 export interface InstalledAppsPlugin {
   getInstalledApps(options?: { includeSystem?: boolean }): Promise<{ apps: InstalledAppInfo[] }>;
   extractApk(options: { packageName: string; includeBase64?: boolean }): Promise<ExtractApkResult>;
   isAvailable(): Promise<{ available: boolean }>;
+  saveApkToDownloads(options: { fileName: string; base64: string }): Promise<SaveApkResult>;
 }
 
 const InstalledApps = registerPlugin<InstalledAppsPlugin>('InstalledApps', {
@@ -34,6 +41,9 @@ const InstalledApps = registerPlugin<InstalledAppsPlugin>('InstalledApps', {
     async isAvailable() {
       return { available: false };
     },
+    async saveApkToDownloads() {
+      throw new Error('ذخیره native فقط روی اندروید در دسترس است');
+    },
   },
 });
 
@@ -45,10 +55,6 @@ export function isNativeAndroid(): boolean {
   }
 }
 
-/**
- * Probe whether the native InstalledApps plugin is actually registered.
- * Tries isAvailable first, then a real getInstalledApps call as fallback.
- */
 export async function canListInstalledApps(): Promise<boolean> {
   if (!isNativeAndroid()) return false;
   try {
@@ -57,7 +63,6 @@ export async function canListInstalledApps(): Promise<boolean> {
   } catch (e) {
     console.warn('InstalledApps.isAvailable failed', e);
   }
-  // Fallback: some builds register the plugin but isAvailable stub fails
   try {
     const r = await InstalledApps.getInstalledApps({ includeSystem: false });
     return Array.isArray(r?.apps);
