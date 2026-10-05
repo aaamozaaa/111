@@ -4,6 +4,11 @@ import { buildRichApkContext } from '../utils/apkContextHelper';
 import { geminiChat } from '../utils/geminiClient';
 import { buildLocalSuggestions, suggestionsToAssistantText } from '../utils/suggestionsEngine';
 import {
+  parseChatCommands,
+  applyActionsToManifest,
+  ParsedChatAction,
+} from '../utils/chatCommandEngine';
+import {
   Sparkles,
   Send,
   Loader2,
@@ -14,7 +19,6 @@ import {
   ShieldCheck,
   AlertTriangle,
   RotateCcw,
-  Smartphone,
   Hammer,
   Upload,
   Wrench,
@@ -25,7 +29,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
-  action?: 'add_app' | 'harden' | 'build' | 'strip_ads';
+  action?: ParsedChatAction['type'];
 }
 
 interface AssistantViewProps {
@@ -36,36 +40,14 @@ interface AssistantViewProps {
   onApplyHardening?: () => void;
   onGoToBuild?: () => void;
   onOpenAdStripper?: () => void;
-}
-
-function detectLocalCommand(text: string): ChatMessage['action'] | null {
-  const t = text.toLowerCase().trim();
-
-  if (
-    /اضافه|افزودن|انتخاب\s*برنامه|از\s*گوشی|نصب\s*شده|آپلود|وارد\s*کن|import|add\s*app|open\s*app/.test(
-      t
-    )
-  ) {
-    return 'add_app';
-  }
-  if (
-    /تبلیغ|حذف\s*ad|tracker|strip\s*ad|آگهی/.test(t)
-  ) {
-    return 'strip_ads';
-  }
-  if (
-    /بیلد|build|خروجی|دانلود\s*apk|ساخت\s*apk|نسخه\s*نهایی|امضا|ذخیره\s*apk|نصب\s*کن/.test(t)
-  ) {
-    return 'build';
-  }
-  if (
-    /اصلاح|سخت.?سازی|امن|cleartext|harden|پچ|باگ|رفع|درست\s*کن|اعمال|انجام\s*بده|فیکس|fix|secure/.test(
-      t
-    )
-  ) {
-    return 'harden';
-  }
-  return null;
+  /** Apply arbitrary manifest XML + optional metadata from chat */
+  onApplyChatPatch?: (payload: {
+    xml: string;
+    name?: string;
+    packageName?: string;
+    versionName?: string;
+    description: string;
+  }) => void;
 }
 
 export const AssistantView: React.FC<AssistantViewProps> = ({
@@ -76,6 +58,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
   onApplyHardening,
   onGoToBuild,
   onOpenAdStripper,
+  onApplyChatPatch,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputPrompt, setInputPrompt] = useState(initialPrompt || '');
@@ -89,29 +72,30 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     welcomeDone.current = project.id;
     const suggestions = buildLocalSuggestions(project);
     const analysis = suggestionsToAssistantText(suggestions, project.name);
-    const primaryAction =
-      suggestions.find((s) => s.action === 'harden')?.action ||
-      suggestions.find((s) => s.action === 'strip_ads')?.action ||
-      suggestions.find((s) => s.action === 'build')?.action ||
-      undefined;
 
     setMessages([
       {
         id: `welcome_${project.id}`,
         role: 'assistant',
         content:
-          'سلام! روی برنامه **' +
+          'سلام! روی **' +
           project.name +
           '** کار می‌کنیم.\n' +
-          'پکیج: `' +
+          '`' +
           project.manifest.packageName +
-          '` · امتیاز: **' +
+          '` · امتیاز **' +
           project.securityReport.score +
           '/100**\n\n' +
           analysis +
-          '\n\nدستورات سریع: «اصلاح کن» · «بیلد کن» · «اضافه کردن برنامه» · «حذف تبلیغ»',
+          '\n\n' +
+          'می‌توانی هر دستوری بنویسی، مثلاً:\n' +
+          '• اصلاح کن / بیلد کن\n' +
+          '• نسخه را 2.1 کن\n' +
+          '• نام را به «تست» تغییر بده\n' +
+          '• مجوز دوربین را حذف کن\n' +
+          '• cleartext را خاموش کن',
         timestamp: Date.now(),
-        action: primaryAction as ChatMessage['action'],
+        action: 'harden',
       },
     ]);
   }, [project]);
@@ -127,171 +111,137 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSending]);
 
-  const runAction = (action: ChatMessage['action']) => {
-    if (!action) return;
+  const executeActions = (actions: ParsedChatAction[]) => {
+    const lines: string[] = [];
+    const patchable = actions.filter((a) =>
+      ['harden', 'set_flag', 'set_label', 'set_version', 'set_package', 'remove_permission', 'add_permission'].includes(
+        a.type
+      )
+    );
 
-    if (action === 'add_app') {
-      onOpenInstalledApps?.();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `act_${Date.now()}`,
-          role: 'assistant',
-          content:
-            '✅ پنل انتخاب/آپلود APK باز شد.\n' +
-            'یک **فایل APK واقعی** انتخاب کنید (نه نمونه داخلی). بعد می‌توانید اصلاح و بیلد کنید.',
-          timestamp: Date.now(),
-          action: 'add_app',
-        },
-      ]);
-      return;
+    if (patchable.length > 0) {
+      const xml = project.manifest?.rawXmlText || '';
+      const result = applyActionsToManifest(xml, patchable);
+      if (result.notes.length) {
+        onApplyChatPatch?.({
+          xml: result.xml,
+          name: result.name,
+          packageName: result.packageName,
+          versionName: result.versionName,
+          description: result.notes.join('؛ '),
+        });
+        // harden path also via legacy callback for score bump compatibility
+        if (patchable.some((a) => a.type === 'harden')) {
+          onApplyHardening?.();
+        }
+        lines.push('✅ تغییرات اعمال شد:');
+        result.notes.forEach((n) => lines.push('• ' + n));
+      }
     }
 
-    if (action === 'harden') {
-      onApplyHardening?.();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `act_${Date.now()}`,
-          role: 'assistant',
-          content:
-            '✅ پچ امنیتی روی **' +
-            project.name +
-            '** اعمال شد:\n' +
-            '- usesCleartextTraffic = false\n' +
-            '- allowBackup = false\n' +
-            '- debuggable = false\n\n' +
-            'الان «بیلد کن» بگویید تا APK ساخته و با Google apksig امضا شود.',
-          timestamp: Date.now(),
-          action: 'build',
-        },
-      ]);
-      return;
+    for (const a of actions) {
+      if (a.type === 'add_app') {
+        onOpenInstalledApps?.();
+        lines.push('✅ پنل انتخاب/آپلود APK باز شد');
+      }
+      if (a.type === 'build') {
+        onGoToBuild?.();
+        lines.push('✅ صفحه ساخت باز شد — «ساخت و امضای قابل نصب» را بزن');
+      }
+      if (a.type === 'strip_ads') {
+        onOpenAdStripper?.();
+        lines.push('✅ ابزار حذف تبلیغات باز شد');
+      }
+      if (a.type === 'analyze') {
+        const suggestions = buildLocalSuggestions(project);
+        lines.push(suggestionsToAssistantText(suggestions, project.name));
+      }
+      if (a.type === 'unknown') {
+        lines.push(a.summary);
+      }
     }
 
-    if (action === 'strip_ads') {
-      onOpenAdStripper?.();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `act_${Date.now()}`,
-          role: 'assistant',
-          content: '✅ ابزار حذف تبلیغات برای **' + project.name + '** باز شد.',
-          timestamp: Date.now(),
-          action: 'strip_ads',
-        },
-      ]);
-      return;
+    if (!lines.length) {
+      lines.push('دستوری برای اجرا پیدا نشد. مثال: «نسخه را 2.0 کن»');
     }
 
-    if (action === 'build') {
-      onGoToBuild?.();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `act_${Date.now()}`,
-          role: 'assistant',
-          content:
-            '✅ صفحه **ساخت** برای **' +
-            project.name +
-            '** باز شد.\n' +
-            '۱) «ساخت و امضای قابل نصب» را بزنید\n' +
-            '۲) برچسب **apksig native** را ببینید\n' +
-            '۳) ذخیره در Downloads → نصب\n' +
-            'اگر همان پکیج قبلاً نصب است، اول حذفش کنید (کلید امضا فرق دارد).',
-          timestamp: Date.now(),
-          action: 'build',
-        },
-      ]);
-    }
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `act_${Date.now()}`,
+        role: 'assistant',
+        content: lines.join('\n'),
+        timestamp: Date.now(),
+        action: actions.find((a) => a.type === 'build')
+          ? 'build'
+          : actions.find((a) => a.type === 'harden')
+            ? 'harden'
+            : undefined,
+      },
+    ]);
   };
 
   const handleSendMessage = async (textToSend?: string) => {
     const prompt = (textToSend || inputPrompt).trim();
     if (!prompt || isSending) return;
 
-    const userMsg: ChatMessage = {
-      id: `user_${Date.now()}`,
-      role: 'user',
-      content: prompt,
-      timestamp: Date.now(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [
+      ...prev,
+      { id: `user_${Date.now()}`, role: 'user', content: prompt, timestamp: Date.now() },
+    ]);
     setInputPrompt('');
 
-    // 1) Local command → always execute immediately
-    const localAction = detectLocalCommand(prompt);
-    if (localAction) {
-      runAction(localAction);
+    // Always try local free-form parser first
+    const actions = parseChatCommands(prompt);
+    const onlyUnknown = actions.length === 1 && actions[0].type === 'unknown';
+
+    if (!onlyUnknown) {
+      executeActions(actions);
       return;
     }
 
-    // 2) Analysis keywords → local suggestions (no API needed)
-    const lower = prompt.toLowerCase();
-    if (
-      /پیشنهاد|تحلیل|بررسی|خطا|مشکل|چطور|چگونه|وضعیت|گزارش|help|analyze/.test(lower)
-    ) {
-      const suggestions = buildLocalSuggestions(project);
-      const analysis = suggestionsToAssistantText(suggestions, project.name);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `local_${Date.now()}`,
-          role: 'assistant',
-          content: analysis + '\n\nبرای اجرا بنویسید: «اصلاح کن» یا «بیلد کن»',
-          timestamp: Date.now(),
-          action:
-            suggestions.find((s) => s.action === 'harden')?.action ||
-            suggestions.find((s) => s.action === 'build')?.action,
-        },
-      ]);
-      return;
-    }
-
-    // 3) Gemini (if key set); on failure → local fallback that still helps
+    // Unknown → try Gemini for explanation, still offer local tips
     setIsSending(true);
     try {
       const apkContext = buildRichApkContext(project);
-      const history = [...messages, userMsg].map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
+      const history = [
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        { role: 'user' as const, content: prompt },
+      ];
       const reply = await geminiChat(history, apkContext);
-      const suggested = detectLocalCommand(reply) || undefined;
+      // If model reply contains executable phrases, run them too
+      const fromReply = parseChatCommands(reply);
+      const runnable = fromReply.filter((a) => a.type !== 'unknown');
       setMessages((prev) => [
         ...prev,
         {
           id: `asst_${Date.now()}`,
           role: 'assistant',
-          content: reply,
+          content:
+            reply +
+            (runnable.length
+              ? '\n\n_(دستورهای قابل اجرا از پاسخ تشخیص داده شد؛ برای اعمال بگو: انجام بده)_'
+              : ''),
           timestamp: Date.now(),
-          action: suggested,
         },
       ]);
-      // If model clearly asks to apply a patch, run it
-      if (suggested === 'harden' || suggested === 'build') {
-        // don't auto-run build navigation unless user asked; only harden is safe
-        if (suggested === 'harden' && /اعمال|اصلاح|harden/i.test(reply)) {
-          onApplyHardening?.();
-        }
-      }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'خطای نامشخص';
+      const msg = err instanceof Error ? err.message : String(err);
       const suggestions = buildLocalSuggestions(project);
-      const analysis = suggestionsToAssistantText(suggestions, project.name);
       setMessages((prev) => [
         ...prev,
         {
           id: `err_${Date.now()}`,
           role: 'assistant',
           content:
-            '⚠️ Gemini در دسترس نیست: ' +
+            'دستور آزاد تشخیص داده نشد و Gemini هم در دسترس نیست:\n' +
             msg +
-            '\n\nبررسی محلی:\n' +
-            analysis +
-            '\n\nدستورات بدون AI: «اصلاح کن» · «بیلد کن» · «اضافه کردن برنامه»',
+            '\n\n' +
+            actions[0].summary +
+            '\n\n' +
+            suggestionsToAssistantText(suggestions, project.name),
           timestamp: Date.now(),
-          action: suggestions.find((s) => s.action === 'harden')?.action || 'build',
+          action: 'harden',
         },
       ]);
     } finally {
@@ -335,56 +285,32 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
             ]);
           }}
           className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
-          title="بازنشانی چت"
         >
           <RotateCcw className="w-4 h-4" />
         </button>
       </div>
 
       <div className="flex flex-wrap gap-2 px-3 py-2 border-b border-slate-800/80 bg-slate-900/40">
-        <button
-          type="button"
-          onClick={() => handleSendMessage('اصلاح کن')}
-          className="px-2.5 py-1 rounded-lg text-[11px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1"
-        >
-          <ShieldCheck className="w-3 h-3" /> اصلاح کن
+        <button type="button" onClick={() => handleSendMessage('اصلاح کن')} className="px-2.5 py-1 rounded-lg text-[11px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+          <ShieldCheck className="w-3 h-3" /> اصلاح
         </button>
-        <button
-          type="button"
-          onClick={() => handleSendMessage('بیلد کن')}
-          className="px-2.5 py-1 rounded-lg text-[11px] bg-sky-500/15 text-sky-300 border border-sky-500/30 flex items-center gap-1"
-        >
-          <Hammer className="w-3 h-3" /> بیلد کن
+        <button type="button" onClick={() => handleSendMessage('بیلد کن')} className="px-2.5 py-1 rounded-lg text-[11px] bg-sky-500/15 text-sky-300 border border-sky-500/30 flex items-center gap-1">
+          <Hammer className="w-3 h-3" /> بیلد
         </button>
-        <button
-          type="button"
-          onClick={() => handleSendMessage('اضافه کردن برنامه')}
-          className="px-2.5 py-1 rounded-lg text-[11px] bg-violet-500/15 text-violet-300 border border-violet-500/30 flex items-center gap-1"
-        >
+        <button type="button" onClick={() => handleSendMessage('اضافه کردن برنامه')} className="px-2.5 py-1 rounded-lg text-[11px] bg-violet-500/15 text-violet-300 border border-violet-500/30 flex items-center gap-1">
           <Upload className="w-3 h-3" /> افزودن APK
         </button>
-        <button
-          type="button"
-          onClick={() => handleSendMessage('حذف تبلیغ')}
-          className="px-2.5 py-1 rounded-lg text-[11px] bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1"
-        >
-          <Wrench className="w-3 h-3" /> حذف تبلیغ
+        <button type="button" onClick={() => handleSendMessage('حذف تبلیغ')} className="px-2.5 py-1 rounded-lg text-[11px] bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+          <Wrench className="w-3 h-3" /> تبلیغ
         </button>
-        <button
-          type="button"
-          onClick={() => handleSendMessage('تحلیل کن')}
-          className="px-2.5 py-1 rounded-lg text-[11px] bg-slate-700/50 text-slate-300 border border-slate-600 flex items-center gap-1"
-        >
+        <button type="button" onClick={() => handleSendMessage('تحلیل کن')} className="px-2.5 py-1 rounded-lg text-[11px] bg-slate-700/50 text-slate-300 border border-slate-600 flex items-center gap-1">
           <Sparkles className="w-3 h-3" /> تحلیل
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
+          <div key={m.id} className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             {m.role === 'assistant' && (
               <div className="w-7 h-7 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
                 <Bot className="w-4 h-4 text-emerald-400" />
@@ -398,15 +324,6 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
               }`}
             >
               {m.content}
-              {m.role === 'assistant' && m.action && (
-                <button
-                  type="button"
-                  onClick={() => runAction(m.action)}
-                  className="mt-2 block w-full text-center px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30"
-                >
-                  اجرای دستور: {m.action}
-                </button>
-              )}
               {m.role === 'assistant' && (
                 <button
                   type="button"
@@ -428,7 +345,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         {isSending && (
           <div className="flex items-center gap-2 text-slate-400 text-xs">
             <Loader2 className="w-4 h-4 animate-spin" />
-            در حال فکر کردن...
+            Gemini...
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -446,7 +363,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
                 handleSendMessage();
               }
             }}
-            placeholder="مثلاً: اصلاح کن / بیلد کن / تحلیل کن"
+            placeholder="هر دستوری: نسخه ۲.۱ · نام تست · حذف مجوز دوربین · اصلاح کن"
             disabled={isSending}
             className="flex-1 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
           />
@@ -461,7 +378,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         </div>
         <p className="text-[10px] text-slate-500 mt-1.5 flex items-center gap-1">
           <AlertTriangle className="w-3 h-3" />
-          برای نصب واقعی: APK اصلی را وارد کنید → اصلاح → بیلد با apksig native
+          دستور آزاد پشتیبانی می‌شود — فقط دکمه‌ها نیست
         </p>
       </div>
     </div>
