@@ -12,7 +12,6 @@ import {
   Copy,
   Check,
   ShieldCheck,
-  FileCode,
   AlertTriangle,
   RotateCcw,
   Smartphone,
@@ -41,48 +40,30 @@ interface AssistantViewProps {
 
 function detectLocalCommand(text: string): ChatMessage['action'] | null {
   const t = text.toLowerCase().trim();
+
   if (
-    t.includes('اضافه') ||
-    t.includes('افزودن') ||
-    t.includes('انتخاب برنامه') ||
-    t.includes('از گوشی') ||
-    t.includes('نصب شده') ||
-    t.includes('آپلود') ||
-    t.includes('import') ||
-    t.includes('add app')
+    /اضافه|افزودن|انتخاب\s*برنامه|از\s*گوشی|نصب\s*شده|آپلود|وارد\s*کن|import|add\s*app|open\s*app/.test(
+      t
+    )
   ) {
     return 'add_app';
   }
   if (
-    t.includes('اصلاح') ||
-    t.includes('سخت') ||
-    t.includes('امن') ||
-    t.includes('cleartext') ||
-    t.includes('harden') ||
-    t.includes('پچ امن') ||
-    t.includes('باگ') ||
-    t.includes('رفع')
-  ) {
-    return 'harden';
-  }
-  if (
-    t.includes('تبلیغ') ||
-    t.includes('ad') ||
-    t.includes('tracker') ||
-    t.includes('حذف تبلیغ')
+    /تبلیغ|حذف\s*ad|tracker|strip\s*ad|آگهی/.test(t)
   ) {
     return 'strip_ads';
   }
   if (
-    t.includes('بیلد') ||
-    t.includes('build') ||
-    t.includes('خروجی') ||
-    t.includes('دانلود apk') ||
-    t.includes('ساخت apk') ||
-    t.includes('نسخه نهایی') ||
-    t.includes('امضا')
+    /بیلد|build|خروجی|دانلود\s*apk|ساخت\s*apk|نسخه\s*نهایی|امضا|ذخیره\s*apk|نصب\s*کن/.test(t)
   ) {
     return 'build';
+  }
+  if (
+    /اصلاح|سخت.?سازی|امن|cleartext|harden|پچ|باگ|رفع|درست\s*کن|اعمال|انجام\s*بده|فیکس|fix|secure/.test(
+      t
+    )
+  ) {
+    return 'harden';
   }
   return null;
 }
@@ -98,12 +79,14 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputPrompt, setInputPrompt] = useState(initialPrompt || '');
-  const [selectedContext, setSelectedContext] = useState<'summary' | 'manifest' | 'security' | 'crash'>('summary');
   const [isSending, setIsSending] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const welcomeDone = useRef<string | null>(null);
 
   useEffect(() => {
+    if (welcomeDone.current === project.id) return;
+    welcomeDone.current = project.id;
     const suggestions = buildLocalSuggestions(project);
     const analysis = suggestionsToAssistantText(suggestions, project.name);
     const primaryAction =
@@ -122,10 +105,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           '** کار می‌کنیم.\n' +
           'پکیج: `' +
           project.manifest.packageName +
-          '` · امتیاز امنیت: **' +
+          '` · امتیاز: **' +
           project.securityReport.score +
           '/100**\n\n' +
-          analysis,
+          analysis +
+          '\n\nدستورات سریع: «اصلاح کن» · «بیلد کن» · «اضافه کردن برنامه» · «حذف تبلیغ»',
         timestamp: Date.now(),
         action: primaryAction as ChatMessage['action'],
       },
@@ -144,6 +128,8 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
   }, [messages, isSending]);
 
   const runAction = (action: ChatMessage['action']) => {
+    if (!action) return;
+
     if (action === 'add_app') {
       onOpenInstalledApps?.();
       setMessages((prev) => [
@@ -152,13 +138,15 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           id: `act_${Date.now()}`,
           role: 'assistant',
           content:
-            'پنل انتخاب برنامه باز شد.\nفایل APK واقعی از گوشی را انتخاب کنید تا **همان برنامه** بارگذاری شود، بعد اصلاح و بیلد روی همان انجام می‌شود.',
+            '✅ پنل انتخاب/آپلود APK باز شد.\n' +
+            'یک **فایل APK واقعی** انتخاب کنید (نه نمونه داخلی). بعد می‌توانید اصلاح و بیلد کنید.',
           timestamp: Date.now(),
           action: 'add_app',
         },
       ]);
       return;
     }
+
     if (action === 'harden') {
       onApplyHardening?.();
       setMessages((prev) => [
@@ -169,13 +157,18 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           content:
             '✅ پچ امنیتی روی **' +
             project.name +
-            '** اعمال شد:\n- usesCleartextTraffic = false\n- allowBackup = false\n- debuggable = false\n\nحالا بگویید «بیلد کن» تا APK نهایی همین برنامه ساخته شود و در Downloads ذخیره شود.',
+            '** اعمال شد:\n' +
+            '- usesCleartextTraffic = false\n' +
+            '- allowBackup = false\n' +
+            '- debuggable = false\n\n' +
+            'الان «بیلد کن» بگویید تا APK ساخته و با Google apksig امضا شود.',
           timestamp: Date.now(),
           action: 'build',
         },
       ]);
       return;
     }
+
     if (action === 'strip_ads') {
       onOpenAdStripper?.();
       setMessages((prev) => [
@@ -183,12 +176,14 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         {
           id: `act_${Date.now()}`,
           role: 'assistant',
-          content: 'ابزار حذف تبلیغات برای **' + project.name + '** باز شد.',
+          content: '✅ ابزار حذف تبلیغات برای **' + project.name + '** باز شد.',
           timestamp: Date.now(),
+          action: 'strip_ads',
         },
       ]);
       return;
     }
+
     if (action === 'build') {
       onGoToBuild?.();
       setMessages((prev) => [
@@ -197,11 +192,13 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           id: `act_${Date.now()}`,
           role: 'assistant',
           content:
-            'صفحه **ساخت و امضا** برای برنامه **' +
+            '✅ صفحه **ساخت** برای **' +
             project.name +
-            '** (`' +
-            project.manifest.packageName +
-            '`) باز شد.\nروی «ساخت و امضای فایل APK» بزنید، بعد «ذخیره در Downloads».\nبرای نصب: Files → Downloads → فایل APK → نصب. اگر برنامه قبلی با همان نام نصب است، اول حذفش کنید.',
+            '** باز شد.\n' +
+            '۱) «ساخت و امضای قابل نصب» را بزنید\n' +
+            '۲) برچسب **apksig native** را ببینید\n' +
+            '۳) ذخیره در Downloads → نصب\n' +
+            'اگر همان پکیج قبلاً نصب است، اول حذفش کنید (کلید امضا فرق دارد).',
           timestamp: Date.now(),
           action: 'build',
         },
@@ -222,21 +219,17 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     setMessages((prev) => [...prev, userMsg]);
     setInputPrompt('');
 
+    // 1) Local command → always execute immediately
     const localAction = detectLocalCommand(prompt);
     if (localAction) {
       runAction(localAction);
       return;
     }
 
-    // Local offline analysis keywords
+    // 2) Analysis keywords → local suggestions (no API needed)
     const lower = prompt.toLowerCase();
     if (
-      lower.includes('پیشنهاد') ||
-      lower.includes('تحلیل') ||
-      lower.includes('بررسی') ||
-      lower.includes('خطا') ||
-      lower.includes('مشکل') ||
-      lower.includes('چطور بهتر')
+      /پیشنهاد|تحلیل|بررسی|خطا|مشکل|چطور|چگونه|وضعیت|گزارش|help|analyze/.test(lower)
     ) {
       const suggestions = buildLocalSuggestions(project);
       const analysis = suggestionsToAssistantText(suggestions, project.name);
@@ -245,7 +238,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         {
           id: `local_${Date.now()}`,
           role: 'assistant',
-          content: analysis,
+          content: analysis + '\n\nبرای اجرا بنویسید: «اصلاح کن» یا «بیلد کن»',
           timestamp: Date.now(),
           action:
             suggestions.find((s) => s.action === 'harden')?.action ||
@@ -255,6 +248,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
       return;
     }
 
+    // 3) Gemini (if key set); on failure → local fallback that still helps
     setIsSending(true);
     try {
       const apkContext = buildRichApkContext(project);
@@ -271,12 +265,18 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           role: 'assistant',
           content: reply,
           timestamp: Date.now(),
-          action: suggested || undefined,
+          action: suggested,
         },
       ]);
+      // If model clearly asks to apply a patch, run it
+      if (suggested === 'harden' || suggested === 'build') {
+        // don't auto-run build navigation unless user asked; only harden is safe
+        if (suggested === 'harden' && /اعمال|اصلاح|harden/i.test(reply)) {
+          onApplyHardening?.();
+        }
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'خطای نامشخص';
-      // Fallback to local suggestions when AI fails
       const suggestions = buildLocalSuggestions(project);
       const analysis = suggestionsToAssistantText(suggestions, project.name);
       setMessages((prev) => [
@@ -285,10 +285,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           id: `err_${Date.now()}`,
           role: 'assistant',
           content:
-            '⚠️ خطا در ارتباط با Gemini:\n' +
+            '⚠️ Gemini در دسترس نیست: ' +
             msg +
-            '\n\nولی بررسی محلی بدون AI انجام شد:\n\n' +
-            analysis,
+            '\n\nبررسی محلی:\n' +
+            analysis +
+            '\n\nدستورات بدون AI: «اصلاح کن» · «بیلد کن» · «اضافه کردن برنامه»',
           timestamp: Date.now(),
           action: suggestions.find((s) => s.action === 'harden')?.action || 'build',
         },
@@ -313,207 +314,155 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
             <Bot className="w-5 h-5 text-emerald-400" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white">دستیار هوشمند · {project.name}</h2>
+            <h2 className="text-sm font-bold text-white">دستیار · {project.name}</h2>
             <p className="text-[11px] text-slate-400 font-mono truncate max-w-[220px]">
               {project.manifest.packageName}
             </p>
           </div>
         </div>
-        <div className="hidden sm:flex items-center gap-1.5 text-[11px]">
-          {(
-            [
-              { id: 'summary' as const, label: 'خلاصه', icon: Sparkles },
-              { id: 'manifest' as const, label: 'منیفست', icon: FileCode },
-              { id: 'security' as const, label: 'امنیت', icon: ShieldCheck },
-              { id: 'crash' as const, label: 'خطا', icon: AlertTriangle },
-            ] as const
-          ).map((ctx) => {
-            const Icon = ctx.icon;
-            const active = selectedContext === ctx.id;
-            return (
-              <button
-                key={ctx.id}
-                onClick={() => setSelectedContext(ctx.id)}
-                className={`px-2 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer ${
-                  active
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    : 'text-slate-400 hover:bg-slate-800 border border-transparent'
-                }`}
-              >
-                <Icon className="w-3 h-3" />
-                <span>{ctx.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="px-3 py-2 border-b border-slate-800 bg-slate-950 flex flex-wrap gap-2">
         <button
-          onClick={() => runAction('add_app')}
-          className="px-3 py-1.5 rounded-lg bg-teal-600/90 hover:bg-teal-500 text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer"
-        >
-          <Smartphone className="w-3.5 h-3.5" />
-          افزودن از گوشی / APK
-        </button>
-        <button
-          onClick={() => runAction('harden')}
-          className="px-3 py-1.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer"
-        >
-          <Wrench className="w-3.5 h-3.5" />
-          اصلاح امنیتی
-        </button>
-        <button
-          onClick={() => runAction('build')}
-          className="px-3 py-1.5 rounded-lg bg-sky-600/90 hover:bg-sky-500 text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer"
-        >
-          <Hammer className="w-3.5 h-3.5" />
-          بیلد نسخه نهایی
-        </button>
-        <button
+          type="button"
           onClick={() => {
+            welcomeDone.current = null;
             const suggestions = buildLocalSuggestions(project);
-            const analysis = suggestionsToAssistantText(suggestions, project.name);
             setMessages([
               {
-                id: `welcome_${Date.now()}`,
+                id: `reset_${Date.now()}`,
                 role: 'assistant',
-                content: analysis,
+                content: suggestionsToAssistantText(suggestions, project.name),
                 timestamp: Date.now(),
-                action: suggestions.find((s) => s.action === 'harden')?.action || 'build',
               },
             ]);
           }}
-          className="px-2 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 text-[11px] cursor-pointer"
-          title="بررسی مجدد"
+          className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+          title="بازنشانی چت"
         >
-          <RotateCcw className="w-3.5 h-3.5" />
+          <RotateCcw className="w-4 h-4" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex flex-wrap gap-2 px-3 py-2 border-b border-slate-800/80 bg-slate-900/40">
+        <button
+          type="button"
+          onClick={() => handleSendMessage('اصلاح کن')}
+          className="px-2.5 py-1 rounded-lg text-[11px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1"
+        >
+          <ShieldCheck className="w-3 h-3" /> اصلاح کن
+        </button>
+        <button
+          type="button"
+          onClick={() => handleSendMessage('بیلد کن')}
+          className="px-2.5 py-1 rounded-lg text-[11px] bg-sky-500/15 text-sky-300 border border-sky-500/30 flex items-center gap-1"
+        >
+          <Hammer className="w-3 h-3" /> بیلد کن
+        </button>
+        <button
+          type="button"
+          onClick={() => handleSendMessage('اضافه کردن برنامه')}
+          className="px-2.5 py-1 rounded-lg text-[11px] bg-violet-500/15 text-violet-300 border border-violet-500/30 flex items-center gap-1"
+        >
+          <Upload className="w-3 h-3" /> افزودن APK
+        </button>
+        <button
+          type="button"
+          onClick={() => handleSendMessage('حذف تبلیغ')}
+          className="px-2.5 py-1 rounded-lg text-[11px] bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1"
+        >
+          <Wrench className="w-3 h-3" /> حذف تبلیغ
+        </button>
+        <button
+          type="button"
+          onClick={() => handleSendMessage('تحلیل کن')}
+          className="px-2.5 py-1 rounded-lg text-[11px] bg-slate-700/50 text-slate-300 border border-slate-600 flex items-center gap-1"
+        >
+          <Sparkles className="w-3 h-3" /> تحلیل
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {messages.map((m) => (
           <div
             key={m.id}
-            className={`flex items-start gap-2.5 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}
+            className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
+            {m.role === 'assistant' && (
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
+                <Bot className="w-4 h-4 text-emerald-400" />
+              </div>
+            )}
             <div
-              className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+              className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
                 m.role === 'user'
-                  ? 'bg-sky-500/20 text-sky-400'
-                  : 'bg-emerald-500/20 text-emerald-400'
+                  ? 'bg-emerald-600 text-white rounded-br-md'
+                  : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-bl-md'
               }`}
             >
-              {m.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+              {m.content}
+              {m.role === 'assistant' && m.action && (
+                <button
+                  type="button"
+                  onClick={() => runAction(m.action)}
+                  className="mt-2 block w-full text-center px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30"
+                >
+                  اجرای دستور: {m.action}
+                </button>
+              )}
+              {m.role === 'assistant' && (
+                <button
+                  type="button"
+                  onClick={() => handleCopy(m.id, m.content)}
+                  className="mt-1 text-[10px] text-slate-500 hover:text-slate-300 inline-flex items-center gap-1"
+                >
+                  {copiedId === m.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  کپی
+                </button>
+              )}
             </div>
-            <div
-              className={`group relative max-w-[85%] px-4 py-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap space-y-2 ${
-                m.role === 'user'
-                  ? 'bg-sky-950/50 border border-sky-800/40 text-slate-100'
-                  : 'bg-slate-900 border border-slate-800 text-slate-200'
-              }`}
-            >
-              <div>{m.content}</div>
-              {m.action === 'add_app' && (
-                <button
-                  onClick={() => runAction('add_app')}
-                  className="px-3 py-1.5 rounded-lg bg-teal-600 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-                >
-                  <Upload className="w-3.5 h-3.5" /> انتخاب / افزودن برنامه
-                </button>
-              )}
-              {m.action === 'harden' && (
-                <button
-                  onClick={() => runAction('harden')}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" /> اعمال اصلاح امنیتی
-                </button>
-              )}
-              {m.action === 'build' && (
-                <button
-                  onClick={() => runAction('build')}
-                  className="px-3 py-1.5 rounded-lg bg-sky-600 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-                >
-                  <Hammer className="w-3.5 h-3.5" /> بیلد و ذخیره APK
-                </button>
-              )}
-              {m.action === 'strip_ads' && (
-                <button
-                  onClick={() => runAction('strip_ads')}
-                  className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[11px] font-bold cursor-pointer"
-                >
-                  حذف تبلیغات
-                </button>
-              )}
-              <button
-                onClick={() => handleCopy(m.id, m.content)}
-                className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 p-1 rounded bg-slate-800/80 text-slate-400 hover:text-white transition-opacity cursor-pointer"
-                title="کپی"
-              >
-                {copiedId === m.id ? (
-                  <Check className="w-3 h-3 text-emerald-400" />
-                ) : (
-                  <Copy className="w-3 h-3" />
-                )}
-              </button>
-            </div>
+            {m.role === 'user' && (
+              <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center shrink-0">
+                <User className="w-4 h-4 text-slate-300" />
+              </div>
+            )}
           </div>
         ))}
-
         {isSending && (
-          <div className="flex items-start gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-              <Loader2 className="w-4 h-4 animate-spin" />
-            </div>
-            <div className="px-4 py-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-400 text-xs">
-              در حال تحلیل با Gemini روی «{project.name}»...
-            </div>
+          <div className="flex items-center gap-2 text-slate-400 text-xs">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            در حال فکر کردن...
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="px-4 py-2 bg-slate-900/60 border-t border-slate-800/80 flex items-center gap-2 overflow-x-auto text-[11px]">
-        <span className="text-slate-400 shrink-0">دستور سریع:</span>
-        {['بررسی و پیشنهاد بده', 'اصلاح کن', 'تبلیغات را حذف کن', 'بیلد نسخه نهایی'].map(
-          (prompt, i) => (
-            <button
-              key={i}
-              onClick={() => handleSendMessage(prompt)}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer shrink-0"
-            >
-              {prompt}
-            </button>
-          )
-        )}
-      </div>
-
-      <div className="p-3 bg-slate-900 border-t border-slate-800">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSendMessage();
-          }}
-          className="flex items-center gap-2"
-        >
+      <div className="p-3 border-t border-slate-800 bg-slate-900/60">
+        <div className="flex gap-2">
           <input
             type="text"
             value={inputPrompt}
             onChange={(e) => setInputPrompt(e.target.value)}
-            placeholder="مثال: پیشنهاد بده · اصلاح کن · بیلد کن..."
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            placeholder="مثلاً: اصلاح کن / بیلد کن / تحلیل کن"
             disabled={isSending}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500"
+            className="flex-1 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
           />
           <button
-            type="submit"
-            disabled={!inputPrompt.trim() || isSending}
-            className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-bold transition-all shadow-md shadow-emerald-500/20 cursor-pointer shrink-0 flex items-center gap-1.5"
+            type="button"
+            onClick={() => handleSendMessage()}
+            disabled={isSending || !inputPrompt.trim()}
+            className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-bold"
           >
-            {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 rotate-180" />}
-            <span className="text-xs">ارسال</span>
+            {isSending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
           </button>
-        </form>
+        </div>
+        <p className="text-[10px] text-slate-500 mt-1.5 flex items-center gap-1">
+          <AlertTriangle className="w-3 h-3" />
+          برای نصب واقعی: APK اصلی را وارد کنید → اصلاح → بیلد با apksig native
+        </p>
       </div>
     </div>
   );
