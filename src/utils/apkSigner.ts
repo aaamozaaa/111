@@ -20,12 +20,33 @@ const SAFE_AD_HOST_REPLACEMENTS: Array<[string, string]> = [
   ['adservice.google.com', '0.0.0.0.0.0.0.0.0.0'], // 20
   ['graph.facebook.com', '0.0.0.0.0.0.0.0.0'], // 18
   ['api.ad.xiaomi.com', '0.0.0.0.0.0.0.0'], // 16
-  ['ads.mopub.com', '0.0.0.0.0.0'], // 13
+  ['ads.mopub.com', '0.0.0.0.0.0.0'], // 13
   ['ad.doubleclick.net', '0.0.0.0.0.0.0.0'], // 18
   ['sdk.appsflyer.com', '0.0.0.0.0.0.0.0'], // 17
   ['adjust.com', '0.0.0.0.0'], // 10
   ['unityads.unity3d.com', '0.0.0.0.0.0.0.0.0.0'], // 20
 ];
+
+/**
+ * ANDROID RULE: AndroidManifest.xml, resources.arsc and .so files MUST be
+ * stored uncompressed (STORED) in the APK, otherwise the PackageManager on
+ * Android 11+ rejects the package with INSTALL_PARSE_FAILED ("مشکلی در تجزیه
+ * این بسته وجود داشت"). This is the #1 reason rebuilt APKs fail to install.
+ */
+const MUST_BE_STORED_RE =
+  /AndroidManifest\.xml$|resources\.arsc$|\.so$|\.png$|\.webp$|\.jpg$|\.jpeg$|^assets\/[^/]*\.(json|wav|ogg|mp3|dat|bin)$/;
+
+/**
+ * Preserves the ORIGINAL compression method of each zip entry.
+ * Falls back to filename rules when the original method is unknown.
+ */
+function entryCompression(path: string, fileObj: JSZip.JSZipObject): 'STORE' | 'DEFLATE' {
+  const internal = fileObj as unknown as { _data?: { compression?: string | null } };
+  const c = internal._data?.compression;
+  if (c === 'DEFLATE') return 'DEFLATE';
+  if (c === 'STORE' || c === null) return 'STORE';
+  return MUST_BE_STORED_RE.test(path) ? 'STORE' : 'DEFLATE';
+}
 
 function wantsSafeAdStrip(project: ApkProject): boolean {
   const changes = project.changes || [];
@@ -52,8 +73,10 @@ async function neutralizeAdsInDex(data: Uint8Array): Promise<{ data: Uint8Array;
 
 /**
  * Rebuild like reliable tools:
- * copy original binary entries, strip META-INF only, never rewrite AndroidManifest AXML.
- * Optional: same-length DEX host neutralization for ads (does not delete methods → less crash risk).
+ * - copy original binary entries keeping their ORIGINAL compression (STORED
+ *   stays STORED) → PackageManager can memory-map manifest/arsc/.so
+ * - strip META-INF signatures only
+ * - optional same-length DEX host neutralization for ads
  */
 export async function buildAndSignApk(
   project: ApkProject,
@@ -109,7 +132,12 @@ export async function buildAndSignApk(
       adHits += result.hits;
     }
 
-    zip.file(path, data, { binary: true, date: fileObj.date || new Date() });
+    const compression = entryCompression(norm, fileObj);
+    zip.file(path, data, {
+      binary: true,
+      date: fileObj.date || new Date(),
+      compression,
+    });
     copied++;
     if (base === 'AndroidManifest.xml') hasManifest = true;
     if (base.endsWith('.dex')) hasDex = true;
@@ -123,7 +151,7 @@ export async function buildAndSignApk(
     70,
     doAdStrip
       ? `بسته‌بندی ${copied} فایل · ${adHits} جایگزینی تبلیغ در DEX`
-      : `بسته‌بندی ${copied} فایل (منیفست دست‌نخورده)`
+      : `بسته‌بندی ${copied} فایل (فشرده‌سازی اصلی حفظ شد)`
   );
 
   const arrayBuffer = await zip.generateAsync({
