@@ -24,7 +24,10 @@ import JSZip from 'jszip';
 interface InstalledAppsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectProject: (project: ApkProject, zip: JSZip | null) => void;
+  /** Preferred name */
+  onSelectProject?: (project: ApkProject, zip: JSZip | null) => void;
+  /** Alias used by App.tsx */
+  onImport?: (project: ApkProject, zip: JSZip | null) => void;
 }
 
 function base64ToBlob(base64: string, mime = 'application/vnd.android.package-archive'): Blob {
@@ -45,7 +48,10 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
   isOpen,
   onClose,
   onSelectProject,
+  onImport,
 }) => {
+  const deliver = onSelectProject || onImport;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [apps, setApps] = useState<InstalledAppInfo[]>([]);
   const [nativeOk, setNativeOk] = useState(false);
@@ -110,6 +116,14 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
     );
   });
 
+  const finishImport = (project: ApkProject, zip: JSZip | null) => {
+    if (typeof deliver !== 'function') {
+      throw new Error('تابع import به مودال وصل نشده است');
+    }
+    deliver(project, zip);
+    onClose();
+  };
+
   const handlePickRealApp = async (app: InstalledAppInfo) => {
     setIsProcessing(true);
     setStatusText('در حال استخراج APK واقعی «' + app.name + '» از گوشی...');
@@ -140,8 +154,7 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
       project.name = app.name;
       project.fileName = extracted.fileName || project.fileName;
 
-      onSelectProject(project, zip);
-      onClose();
+      finishImport(project, zip);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       alert('خطا در استخراج برنامه: ' + msg);
@@ -162,8 +175,7 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
         file.name.replace(/\.apk$/i, ''),
         (p, t) => setStatusText(t + ' (' + p + '%)')
       );
-      onSelectProject(project, zip);
-      onClose();
+      finishImport(project, zip);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'فایل معتبر نیست';
       alert('خطا در باز کردن APK: ' + msg);
@@ -191,9 +203,7 @@ export const InstalledAppsModal: React.FC<InstalledAppsModalProps> = ({
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                لیست از PackageManager اندروید خوانده می‌شود
-              </p>
+              <p className="text-xs text-slate-400 mt-0.5">لیست از PackageManager اندروید خوانده می‌شود</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer">
