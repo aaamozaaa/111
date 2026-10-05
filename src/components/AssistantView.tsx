@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ApkProject } from '../types/apk';
 import { buildRichApkContext } from '../utils/apkContextHelper';
-import { geminiChat } from '../utils/geminiClient';
+import { getStoredApiKey } from '../utils/geminiClient';
 import { buildLocalSuggestions, suggestionsToAssistantText } from '../utils/suggestionsEngine';
+import { parseChatCommands } from '../utils/chatCommandEngine';
+import { applyActionsToManifest } from '../utils/chatCommandEngine';
 import {
-  parseChatCommands,
-  applyActionsToManifest,
-  ParsedChatAction,
-} from '../utils/chatCommandEngine';
+  geminiExecuteUserCommand,
+  applyManifestOperations,
+} from '../utils/commandExecutor';
 import {
   Sparkles,
   Send,
@@ -29,7 +30,6 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
-  action?: ParsedChatAction['type'];
 }
 
 interface AssistantViewProps {
@@ -40,7 +40,6 @@ interface AssistantViewProps {
   onApplyHardening?: () => void;
   onGoToBuild?: () => void;
   onOpenAdStripper?: () => void;
-  /** Apply arbitrary manifest XML + optional metadata from chat */
   onApplyChatPatch?: (payload: {
     xml: string;
     name?: string;
@@ -72,6 +71,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     welcomeDone.current = project.id;
     const suggestions = buildLocalSuggestions(project);
     const analysis = suggestionsToAssistantText(suggestions, project.name);
+    const hasKey = !!getStoredApiKey();
 
     setMessages([
       {
@@ -80,7 +80,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         content:
           'سلام! روی **' +
           project.name +
-          '** کار می‌کنیم.\n' +
+          '** هستم.\n' +
           '`' +
           project.manifest.packageName +
           '` · امتیاز **' +
@@ -88,14 +88,10 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           '/100**\n\n' +
           analysis +
           '\n\n' +
-          'می‌توانی هر دستوری بنویسی، مثلاً:\n' +
-          '• اصلاح کن / بیلد کن\n' +
-          '• نسخه را 2.1 کن\n' +
-          '• نام را به «تست» تغییر بده\n' +
-          '• مجوز دوربین را حذف کن\n' +
-          '• cleartext را خاموش کن',
+          (hasKey
+            ? 'کلید Gemini فعال است — می‌توانی **هر دستوری** بنویسی (نه فقط دکمه‌ها). من می‌فهمم و روی منیفست اعمال می‌کنم.'
+            : 'برای دستورهای آزاد (خارج از دکمه‌ها) کلید Gemini را در تنظیمات بگذار. دکمه‌های آماده بدون کلید هم کار می‌کنند.'),
         timestamp: Date.now(),
-        action: 'harden',
       },
     ]);
   }, [project]);
@@ -111,74 +107,10 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSending]);
 
-  const executeActions = (actions: ParsedChatAction[]) => {
-    const lines: string[] = [];
-    const patchable = actions.filter((a) =>
-      ['harden', 'set_flag', 'set_label', 'set_version', 'set_package', 'remove_permission', 'add_permission'].includes(
-        a.type
-      )
-    );
-
-    if (patchable.length > 0) {
-      const xml = project.manifest?.rawXmlText || '';
-      const result = applyActionsToManifest(xml, patchable);
-      if (result.notes.length) {
-        onApplyChatPatch?.({
-          xml: result.xml,
-          name: result.name,
-          packageName: result.packageName,
-          versionName: result.versionName,
-          description: result.notes.join('؛ '),
-        });
-        // harden path also via legacy callback for score bump compatibility
-        if (patchable.some((a) => a.type === 'harden')) {
-          onApplyHardening?.();
-        }
-        lines.push('✅ تغییرات اعمال شد:');
-        result.notes.forEach((n) => lines.push('• ' + n));
-      }
-    }
-
-    for (const a of actions) {
-      if (a.type === 'add_app') {
-        onOpenInstalledApps?.();
-        lines.push('✅ پنل انتخاب/آپلود APK باز شد');
-      }
-      if (a.type === 'build') {
-        onGoToBuild?.();
-        lines.push('✅ صفحه ساخت باز شد — «ساخت و امضای قابل نصب» را بزن');
-      }
-      if (a.type === 'strip_ads') {
-        onOpenAdStripper?.();
-        lines.push('✅ ابزار حذف تبلیغات باز شد');
-      }
-      if (a.type === 'analyze') {
-        const suggestions = buildLocalSuggestions(project);
-        lines.push(suggestionsToAssistantText(suggestions, project.name));
-      }
-      if (a.type === 'unknown') {
-        lines.push(a.summary);
-      }
-    }
-
-    if (!lines.length) {
-      lines.push('دستوری برای اجرا پیدا نشد. مثال: «نسخه را 2.0 کن»');
-    }
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `act_${Date.now()}`,
-        role: 'assistant',
-        content: lines.join('\n'),
-        timestamp: Date.now(),
-        action: actions.find((a) => a.type === 'build')
-          ? 'build'
-          : actions.find((a) => a.type === 'harden')
-            ? 'harden'
-            : undefined,
-      },
-    ]);
+  const openTool = (tool?: string) => {
+    if (tool === 'build') onGoToBuild?.();
+    if (tool === 'add_app') onOpenInstalledApps?.();
+    if (tool === 'strip_ads') onOpenAdStripper?.();
   };
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -191,59 +123,167 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     ]);
     setInputPrompt('');
 
-    // Always try local free-form parser first
-    const actions = parseChatCommands(prompt);
-    const onlyUnknown = actions.length === 1 && actions[0].type === 'unknown';
+    // 1) Quick local presets (buttons / simple phrases) — instant, no API
+    const localActions = parseChatCommands(prompt);
+    const hasLocalExecutable = localActions.some((a) => a.type !== 'unknown');
+    const isSimplePreset =
+      hasLocalExecutable &&
+      localActions.every((a) =>
+        ['add_app', 'build', 'strip_ads', 'harden', 'analyze'].includes(a.type)
+      );
 
-    if (!onlyUnknown) {
-      executeActions(actions);
-      return;
-    }
-
-    // Unknown → try Gemini for explanation, still offer local tips
-    setIsSending(true);
-    try {
-      const apkContext = buildRichApkContext(project);
-      const history = [
-        ...messages.map((m) => ({ role: m.role, content: m.content })),
-        { role: 'user' as const, content: prompt },
-      ];
-      const reply = await geminiChat(history, apkContext);
-      // If model reply contains executable phrases, run them too
-      const fromReply = parseChatCommands(reply);
-      const runnable = fromReply.filter((a) => a.type !== 'unknown');
+    if (isSimplePreset && !getStoredApiKey()) {
+      // offline preset path
+      const lines: string[] = [];
+      const patchable = localActions.filter((a) =>
+        ['harden', 'set_flag', 'set_label', 'set_version', 'set_package', 'remove_permission', 'add_permission'].includes(
+          a.type
+        )
+      );
+      if (patchable.length) {
+        const result = applyActionsToManifest(project.manifest?.rawXmlText || '', patchable);
+        if (result.notes.length) {
+          onApplyChatPatch?.({
+            xml: result.xml,
+            name: result.name,
+            packageName: result.packageName,
+            versionName: result.versionName,
+            description: result.notes.join('؛ '),
+          });
+          if (patchable.some((a) => a.type === 'harden')) onApplyHardening?.();
+          lines.push('✅ ' + result.notes.join('\n• '));
+        }
+      }
+      for (const a of localActions) {
+        if (a.type === 'add_app') {
+          onOpenInstalledApps?.();
+          lines.push('✅ پنل APK باز شد');
+        }
+        if (a.type === 'build') {
+          onGoToBuild?.();
+          lines.push('✅ صفحه ساخت باز شد');
+        }
+        if (a.type === 'strip_ads') {
+          onOpenAdStripper?.();
+          lines.push('✅ ابزار تبلیغات باز شد');
+        }
+        if (a.type === 'analyze') {
+          lines.push(suggestionsToAssistantText(buildLocalSuggestions(project), project.name));
+        }
+      }
       setMessages((prev) => [
         ...prev,
         {
-          id: `asst_${Date.now()}`,
+          id: `local_${Date.now()}`,
           role: 'assistant',
-          content:
-            reply +
-            (runnable.length
-              ? '\n\n_(دستورهای قابل اجرا از پاسخ تشخیص داده شد؛ برای اعمال بگو: انجام بده)_'
-              : ''),
+          content: lines.join('\n') || 'انجام شد',
+          timestamp: Date.now(),
+        },
+      ]);
+      return;
+    }
+
+    // 2) Free-form: Gemini understands YOUR instruction and applies it
+    setIsSending(true);
+    try {
+      const apkContext = buildRichApkContext(project);
+      const plan = await geminiExecuteUserCommand(
+        prompt,
+        apkContext,
+        project.manifest?.rawXmlText || ''
+      );
+
+      const parts: string[] = [];
+      parts.push('📝 فهمیدم: ' + plan.understood);
+      parts.push(plan.reply);
+
+      if (plan.canExecute && plan.operations.length > 0) {
+        const applied = applyManifestOperations(
+          project.manifest?.rawXmlText || '',
+          plan.operations
+        );
+        onApplyChatPatch?.({
+          xml: applied.xml,
+          name: applied.meta.name,
+          packageName: applied.meta.packageName,
+          versionName: applied.meta.versionName,
+          description: plan.understood + ' | ' + applied.notes.join('؛ '),
+        });
+        parts.push('');
+        parts.push('✅ روی پروژه اعمال شد:');
+        applied.notes.forEach((n) => parts.push('• ' + n));
+        if (plan.needsBuild) {
+          parts.push('');
+          parts.push('برای خروجی نهایی بگو «بیلد کن» یا دکمه بیلد را بزن.');
+        }
+      } else if (plan.canExecute && plan.operations.length === 0) {
+        parts.push('عملیات قابل‌اعمال ساخته نشد (منیفست تغییر نکرد).');
+      }
+
+      openTool(plan.openTool);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `exec_${Date.now()}`,
+          role: 'assistant',
+          content: parts.join('\n'),
           timestamp: Date.now(),
         },
       ]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      const suggestions = buildLocalSuggestions(project);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err_${Date.now()}`,
-          role: 'assistant',
-          content:
-            'دستور آزاد تشخیص داده نشد و Gemini هم در دسترس نیست:\n' +
-            msg +
-            '\n\n' +
-            actions[0].summary +
-            '\n\n' +
-            suggestionsToAssistantText(suggestions, project.name),
-          timestamp: Date.now(),
-          action: 'harden',
-        },
-      ]);
+
+      // Fallback: try local parser for partial match
+      if (hasLocalExecutable) {
+        const result = applyActionsToManifest(
+          project.manifest?.rawXmlText || '',
+          localActions.filter((a) => a.type !== 'unknown' && a.type !== 'analyze')
+        );
+        if (result.notes.length) {
+          onApplyChatPatch?.({
+            xml: result.xml,
+            name: result.name,
+            packageName: result.packageName,
+            versionName: result.versionName,
+            description: result.notes.join('؛ '),
+          });
+        }
+        for (const a of localActions) {
+          if (a.type === 'build') onGoToBuild?.();
+          if (a.type === 'add_app') onOpenInstalledApps?.();
+          if (a.type === 'strip_ads') onOpenAdStripper?.();
+          if (a.type === 'harden') onApplyHardening?.();
+        }
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `fb_${Date.now()}`,
+            role: 'assistant',
+            content:
+              '⚠️ Gemini: ' +
+              msg +
+              '\n\nاما دستورهای قابل تشخیص محلی اعمال شد:\n• ' +
+              (result.notes.join('\n• ') || localActions.map((a) => a.summary).join('\n• ')),
+            timestamp: Date.now(),
+          },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `err_${Date.now()}`,
+            role: 'assistant',
+            content:
+              '❌ نتوانستم دستور آزاد را اجرا کنم:\n' +
+              msg +
+              '\n\n۱) در تنظیمات کلید Gemini را ذخیره کن\n' +
+              '۲) دوباره همان دستور خودت را بفرست\n' +
+              '۳) یا از دکمه‌های آماده استفاده کن',
+            timestamp: Date.now(),
+          },
+        ]);
+      }
     } finally {
       setIsSending(false);
     }
@@ -274,12 +314,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           type="button"
           onClick={() => {
             welcomeDone.current = null;
-            const suggestions = buildLocalSuggestions(project);
             setMessages([
               {
                 id: `reset_${Date.now()}`,
                 role: 'assistant',
-                content: suggestionsToAssistantText(suggestions, project.name),
+                content: suggestionsToAssistantText(buildLocalSuggestions(project), project.name),
                 timestamp: Date.now(),
               },
             ]);
@@ -298,7 +337,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           <Hammer className="w-3 h-3" /> بیلد
         </button>
         <button type="button" onClick={() => handleSendMessage('اضافه کردن برنامه')} className="px-2.5 py-1 rounded-lg text-[11px] bg-violet-500/15 text-violet-300 border border-violet-500/30 flex items-center gap-1">
-          <Upload className="w-3 h-3" /> افزودن APK
+          <Upload className="w-3 h-3" /> APK
         </button>
         <button type="button" onClick={() => handleSendMessage('حذف تبلیغ')} className="px-2.5 py-1 rounded-lg text-[11px] bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
           <Wrench className="w-3 h-3" /> تبلیغ
@@ -345,7 +384,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         {isSending && (
           <div className="flex items-center gap-2 text-slate-400 text-xs">
             <Loader2 className="w-4 h-4 animate-spin" />
-            Gemini...
+            در حال فهم و اجرای دستور شما...
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -363,7 +402,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
                 handleSendMessage();
               }
             }}
-            placeholder="هر دستوری: نسخه ۲.۱ · نام تست · حذف مجوز دوربین · اصلاح کن"
+            placeholder="دستور خودت را بنویس — هر چیزی که می‌خواهی روی APK انجام شود"
             disabled={isSending}
             className="flex-1 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
           />
@@ -378,7 +417,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         </div>
         <p className="text-[10px] text-slate-500 mt-1.5 flex items-center gap-1">
           <AlertTriangle className="w-3 h-3" />
-          دستور آزاد پشتیبانی می‌شود — فقط دکمه‌ها نیست
+          دستور آزاد با Gemini اجرا می‌شود — کلید را در تنظیمات بگذار
         </p>
       </div>
     </div>
