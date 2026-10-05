@@ -52,71 +52,58 @@ export const BuildView: React.FC<BuildViewProps> = ({
     setBuiltApk(null);
     setSaveMessage(null);
 
-    const modifiedMap = new Map<string, string>();
-    modifiedMap.set('AndroidManifest.xml', project.manifest.rawXmlText);
-
     try {
+      if (!zip) {
+        throw new Error(
+          'APK اصلی در حافظه نیست. از لیست برنامه‌های نصب‌شده یا از Downloads یک APK واقعی وارد کنید.'
+        );
+      }
+
       const keystore: KeystoreConfig = {
         alias: alias.trim() || 'apkaistudio-release',
         organization: org.trim() || 'APK AI Studio Release',
         commonName: project.name,
       };
 
-      setProgress({ percent: 15, text: 'بسته‌بندی فایل‌ها و منیفست...' });
+      setProgress({ percent: 10, text: 'کپی باینری APK اصلی (بدون دستکاری منیفست)...' });
       const result = await buildAndSignApk(
         project,
         zip,
-        modifiedMap,
+        new Map(),
         keystore,
         (percent, text) => {
-          // Reserve 0-70 for JS pack, 70-100 for native sign
-          setProgress({ percent: Math.min(70, Math.round(percent * 0.7)), text });
+          setProgress({ percent: Math.min(55, Math.round(percent * 0.55)), text });
         }
       );
 
-      setProgress({ percent: 75, text: 'امضای رسمی Google apksig (v1+v2+v3)...' });
-      let finalBlob = result.blob;
-      let finalName = result.fileName;
-      let nativeSigned = false;
+      setProgress({ percent: 60, text: 'امضای Google apksig روی گوشی (اجباری)...' });
+      const signed = await nativeSignApk(result.blob, result.fileName);
 
-      try {
-        const signed = await nativeSignApk(result.blob, result.fileName);
-        finalBlob = signed.blob;
-        finalName = signed.fileName;
-        nativeSigned = signed.usedNative;
-        setProgress({
-          percent: 95,
-          text: nativeSigned
-            ? 'امضای native موفق — آماده نصب واقعی'
-            : 'امضای مرورگر (native در دسترس نبود)',
-        });
-      } catch (signErr: unknown) {
-        console.warn('native sign failed, using packaged APK', signErr);
-        setProgress({ percent: 90, text: 'ادامه با امضای بسته‌بندی‌شده...' });
+      if (!signed.usedNative) {
+        throw new Error(
+          'پلاگین امضای native در این نسخه APK فعال نیست. آخرین Artifact موفق GitHub Actions را نصب کنید (باید برچسب apksig native ببینید). بدون آن اندروید بسته را قبول نمی‌کند.'
+        );
       }
 
-      const hashBuf = await crypto.subtle.digest('SHA-256', await finalBlob.arrayBuffer());
+      setProgress({ percent: 95, text: 'امضای native موفق' });
+
+      const hashBuf = await crypto.subtle.digest('SHA-256', await signed.blob.arrayBuffer());
       const signedSha256 = Array.from(new Uint8Array(hashBuf))
         .map((b) => b.toString(16).padStart(2, '0'))
         .join('');
 
       setBuiltApk({
-        blob: finalBlob,
-        fileName: finalName,
+        blob: signed.blob,
+        fileName: signed.fileName,
         signedSha256,
-        nativeSigned,
+        nativeSigned: true,
       });
-      setProgress({ percent: 100, text: 'تمام' });
-      onAddLog(
-        'build',
-        nativeSigned
-          ? `APK با Google apksig امضا شد و قابل نصب است: ${finalName}`
-          : `APK بسته‌بندی شد (بدون native sign): ${finalName}`
-      );
+      setProgress({ percent: 100, text: 'تمام — قابل نصب' });
+      onAddLog('build', `APK با Google apksig امضا شد: ${signed.fileName}`);
     } catch (err: unknown) {
       console.error(err);
-      const msg = err instanceof Error ? err.message : 'خطای نامشخص در طول فرآیند ساخت و امضا';
-      setBuildError(`خطا در خط لوله ساخت: ${msg}`);
+      const msg = err instanceof Error ? err.message : 'خطای نامشخص';
+      setBuildError(msg);
       onAddLog('error', `خطای ساخت: ${msg}`);
     } finally {
       setIsBuilding(false);
@@ -142,24 +129,35 @@ export const BuildView: React.FC<BuildViewProps> = ({
   return (
     <div className="space-y-6 pb-12">
       <div>
-        <h1 className="text-xl font-bold text-white tracking-tight">ساخت و امضای APK قابل نصب</h1>
+        <h1 className="text-xl font-bold text-white tracking-tight">ساخت APK قابل نصب</h1>
         <p className="text-xs text-slate-400 mt-1">
-          بسته‌بندی تغییرات + امضای رسمی Google apksig (v1/v2/v3) روی خود گوشی تا اندروید قبول کند.
+          مثل ابزارهای قابل‌اعتماد: کپی باینری اصلی + حذف امضای قدیمی + امضای Google apksig. منیفست باینری
+          دست‌کاری نمی‌شود (تا خطای «تجزیه بسته» ندهد).
         </p>
       </div>
 
+      {!zip && (
+        <div className="p-4 rounded-2xl border border-amber-500/40 bg-amber-950/30 text-amber-100 text-xs leading-relaxed">
+          <AlertTriangle className="w-4 h-4 inline-block ml-1 text-amber-400" />
+          هنوز APK واقعی در حافظه نیست. از «برنامه‌های نصب‌شده» یا انتخاب فایل از Downloads یک APK وارد
+          کنید، بعد بیلد بزنید.
+        </div>
+      )}
+
       <div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40">
-        <span className="text-xs text-slate-400 block mb-2 font-semibold">مراحل:</span>
+        <span className="text-xs text-slate-400 block mb-2 font-semibold">مراحل واقعی:</span>
         <div className="flex items-center justify-between gap-2 overflow-x-auto text-xs font-mono py-1">
-          {['۱. بسته', '۲. منیفست', '۳. apksig', '۴. Downloads', '۵. نصب'].map((step, idx) => (
-            <div
-              key={idx}
-              className="flex items-center gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 shrink-0"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{step}</span>
-            </div>
-          ))}
+          {['۱. کپی باینری', '۲. حذف META-INF', '۳. apksig', '۴. Downloads', '۵. حذف نسخه قبلی + نصب'].map(
+            (step, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 shrink-0"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{step}</span>
+              </div>
+            )
+          )}
         </div>
       </div>
 
@@ -167,10 +165,8 @@ export const BuildView: React.FC<BuildViewProps> = ({
         <div className="flex items-center gap-2.5">
           <Key className="w-5 h-5 text-emerald-400" />
           <div>
-            <h3 className="text-sm font-semibold text-white">کلید امضا (داخل گوشی ذخیره می‌شود)</h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              کلید RSA یک‌بار ساخته و نگه داشته می‌شود تا آپدیت‌های بعدی با همان امضا سازگار باشند.
-            </p>
+            <h3 className="text-sm font-semibold text-white">کلید امضا (داخل گوشی)</h3>
+            <p className="text-xs text-slate-400 mt-0.5">با کلید فروشگاه فرق دارد → نسخه قبلی همان پکیج را حذف کنید.</p>
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-2">
@@ -198,22 +194,15 @@ export const BuildView: React.FC<BuildViewProps> = ({
       </div>
 
       <div className="p-6 rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900 to-slate-950 text-center space-y-4">
-        <div>
-          <h3 className="text-base font-bold text-white">تولید APK قابل نصب واقعی</h3>
-          <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-            بعد از ساخت، فایل را در Downloads ذخیره کنید. نسخهٔ قبلی همین پکیج را حذف کنید، بعد نصب کنید.
-          </p>
-        </div>
-
         <button
           onClick={handleStartBuild}
-          disabled={isBuilding}
+          disabled={isBuilding || !zip}
           className="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-bold text-sm transition-all shadow-lg shadow-emerald-500/20 cursor-pointer inline-flex items-center gap-2"
         >
           {isBuilding ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              <span>در حال ساخت و امضای native...</span>
+              <span>در حال ساخت...</span>
             </>
           ) : (
             <>
@@ -237,15 +226,6 @@ export const BuildView: React.FC<BuildViewProps> = ({
             </div>
           </div>
         )}
-
-        <div className="pt-2 flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-400">
-          <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            ✓ Google apksig v1+v2+v3
-          </span>
-          <span className="px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20">
-            ✓ نصب واقعی روی گوشی
-          </span>
-        </div>
       </div>
 
       <div className="p-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -255,7 +235,7 @@ export const BuildView: React.FC<BuildViewProps> = ({
           </div>
           <div>
             <h4 className="text-sm font-bold text-white">GitHub Actions</h4>
-            <p className="text-xs text-slate-400 mt-0.5">بیلد ابری همین اپ در Artifacts</p>
+            <p className="text-xs text-slate-400 mt-0.5">آخرین Artifact را نصب کنید تا پلاگین ApkSigner باشد</p>
           </div>
         </div>
         <button
@@ -285,22 +265,16 @@ export const BuildView: React.FC<BuildViewProps> = ({
         </div>
       )}
 
-      {builtApk && (
+      {builtApk && builtApk.nativeSigned && (
         <div className="p-5 rounded-2xl border-2 border-emerald-500/40 bg-slate-900/90 shadow-2xl space-y-4">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2 text-emerald-400">
               <CheckCircle2 className="w-5 h-5" />
               <h3 className="text-sm font-bold text-white">APK آماده نصب</h3>
             </div>
-            <span
-              className={`text-xs px-2.5 py-0.5 rounded-full font-mono flex items-center gap-1 ${
-                builtApk.nativeSigned
-                  ? 'bg-emerald-500/20 text-emerald-300'
-                  : 'bg-amber-500/20 text-amber-300'
-              }`}
-            >
+            <span className="text-xs px-2.5 py-0.5 rounded-full font-mono flex items-center gap-1 bg-emerald-500/20 text-emerald-300">
               <ShieldCheck className="w-3.5 h-3.5" />
-              {builtApk.nativeSigned ? 'apksig native' : 'بدون native'}
+              apksig native
             </span>
           </div>
 
@@ -313,26 +287,18 @@ export const BuildView: React.FC<BuildViewProps> = ({
               <span className="text-slate-400">حجم:</span>
               <span>{(builtApk.blob.size / (1024 * 1024)).toFixed(2)} MB</span>
             </div>
-            <div className="flex items-center justify-between text-slate-300">
-              <span className="text-slate-400">SHA-256:</span>
-              <span className="truncate max-w-xs">{builtApk.signedSha256}</span>
-            </div>
           </div>
 
-          {builtApk.nativeSigned ? (
-            <p className="text-[11px] text-emerald-200/90 leading-relaxed">
-              این فایل با کتابخانه رسمی Google apksig امضا شده و اندروید باید آن را نصب کند. اگر همان
-              پکیج قبلاً نصب است، اول حذفش کنید (چون کلید امضا با نسخهٔ فروشگاه فرق دارد).
-            </p>
-          ) : (
-            <p className="text-[11px] text-amber-200/90 leading-relaxed">
-              امضای native در این نسخه فعال نشد. APK را از آخرین بیلد GitHub Actions نصب کنید تا پلاگین
-              ApkSigner همراه باشد.
-            </p>
-          )}
+          <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+            ۱) ذخیره در Downloads
+            <br />
+            ۲) نسخه قبلی همین پکیج را از گوشی حذف کن
+            <br />
+            ۳) فایل جدید را نصب کن
+          </p>
 
           {saveMessage && (
-            <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/40 text-xs text-emerald-100 whitespace-pre-wrap leading-relaxed">
+            <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/40 text-xs text-emerald-100 whitespace-pre-wrap">
               {saveMessage}
             </div>
           )}
@@ -340,23 +306,23 @@ export const BuildView: React.FC<BuildViewProps> = ({
           <button
             onClick={handleDownload}
             disabled={isSaving}
-            className="w-full px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-sm font-bold transition-all shadow-lg shadow-emerald-500/20 cursor-pointer flex items-center justify-center gap-2"
+            className="w-full px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-sm font-bold cursor-pointer flex items-center justify-center gap-2"
           >
             {isSaving ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>ذخیره در Downloads...</span>
+                ذخیره...
               </>
             ) : (
               <>
                 <Download className="w-5 h-5" />
-                <span>ذخیره در Downloads و نصب</span>
+                ذخیره در Downloads
               </>
             )}
           </button>
           <p className="text-[11px] text-slate-400 text-center flex items-center justify-center gap-1">
             <Share2 className="w-3.5 h-3.5" />
-            Files → Downloads → باز کردن APK → نصب
+            Files → Downloads → نصب
           </p>
         </div>
       )}
