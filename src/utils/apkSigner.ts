@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { ApkProject } from '../types/apk';
+import { patchDexString } from './dexPatcher';
 
 export interface KeystoreConfig {
   alias: string;
@@ -10,10 +11,49 @@ export interface KeystoreConfig {
 }
 
 /**
- * Rebuild like reliable tools (Lucky Patcher-style):
- * copy original binary entries, strip META-INF signatures only,
- * NEVER rewrite AndroidManifest with JS AXML (causes parse-package errors).
- * Output is unsigned ZIP for on-device Google apksig.
+ * Known ad/tracker hosts → same-length inert host (keeps DEX string pool valid).
+ * Only equal-length replacements are applied so ART won't reject the DEX.
+ */
+const SAFE_AD_HOST_REPLACEMENTS: Array<[string, string]> = [
+  ['googleads.g.doubleclick.net', '0.0.0.0.0.0.0.0.0.0.0.0.0.0'], // 27
+  ['pagead2.googlesyndication.com', '0.0.0.0.0.0.0.0.0.0.0.0.0.0.0'], // 28
+  ['adservice.google.com', '0.0.0.0.0.0.0.0.0.0'], // 20
+  ['graph.facebook.com', '0.0.0.0.0.0.0.0.0'], // 18
+  ['api.ad.xiaomi.com', '0.0.0.0.0.0.0.0'], // 16
+  ['ads.mopub.com', '0.0.0.0.0.0'], // 13
+  ['ad.doubleclick.net', '0.0.0.0.0.0.0.0'], // 18
+  ['sdk.appsflyer.com', '0.0.0.0.0.0.0.0'], // 17
+  ['adjust.com', '0.0.0.0.0'], // 10
+  ['unityads.unity3d.com', '0.0.0.0.0.0.0.0.0.0'], // 20
+];
+
+function wantsSafeAdStrip(project: ApkProject): boolean {
+  const changes = project.changes || [];
+  return changes.some((c) =>
+    /تبلیغ|tracker|strip\s*ad|ad\s*strip|حذف.*تبلیغ|آگهی/i.test(
+      (c.descriptionFa || '') + ' ' + (c.filePath || '')
+    )
+  );
+}
+
+async function neutralizeAdsInDex(data: Uint8Array): Promise<{ data: Uint8Array; hits: number }> {
+  let buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  let hits = 0;
+  for (const [from, to] of SAFE_AD_HOST_REPLACEMENTS) {
+    if (from.length !== to.length) continue;
+    const result = await patchDexString(buf, from, to);
+    if (result.replacedCount > 0) {
+      hits += result.replacedCount;
+      buf = result.patchedBuffer;
+    }
+  }
+  return { data: new Uint8Array(buf), hits };
+}
+
+/**
+ * Rebuild like reliable tools:
+ * copy original binary entries, strip META-INF only, never rewrite AndroidManifest AXML.
+ * Optional: same-length DEX host neutralization for ads (does not delete methods → less crash risk).
  */
 export async function buildAndSignApk(
   project: ApkProject,
@@ -26,7 +66,7 @@ export async function buildAndSignApk(
 
   if (!baseZip) {
     throw new Error(
-      'فایل APK اصلی در حافظه نیست. اول یک APK واقعی از لیست برنامه‌ها یا Downloads وارد کنید. نمونه داخلی قابل نصب نیست.'
+      'فایل APK اصلی در حافظه نیست. اول یک APK واقعی وارد کنید. نمونه داخلی قابل نصب نیست.'
     );
   }
 
@@ -34,8 +74,10 @@ export async function buildAndSignApk(
   let hasManifest = false;
   let hasDex = false;
   let copied = 0;
+  let adHits = 0;
+  const doAdStrip = wantsSafeAdStrip(project);
 
-  onProgress?.(20, 'کپی باینری فایل‌های اصلی بدون دستکاری...');
+  onProgress?.(15, 'کپی باینری فایل‌های اصلی...');
 
   for (const path of Object.keys(baseZip.files)) {
     const fileObj = baseZip.files[path];
@@ -57,11 +99,18 @@ export async function buildAndSignApk(
       }
     }
 
-    const data = await fileObj.async('uint8array');
+    let data = await fileObj.async('uint8array');
+    const base = norm.split('/').pop() || norm;
+
+    if (doAdStrip && base.endsWith('.dex')) {
+      onProgress?.(40, `خنثی‌سازی امن host تبلیغات در ${base}...`);
+      const result = await neutralizeAdsInDex(data);
+      data = result.data;
+      adHits += result.hits;
+    }
+
     zip.file(path, data, { binary: true, date: fileObj.date || new Date() });
     copied++;
-
-    const base = norm.split('/').pop() || norm;
     if (base === 'AndroidManifest.xml') hasManifest = true;
     if (base.endsWith('.dex')) hasDex = true;
   }
@@ -70,7 +119,12 @@ export async function buildAndSignApk(
   if (!hasDex) throw new Error('classes.dex در APK نیست');
   if (copied < 3) throw new Error('تعداد فایل‌های کپی‌شده غیرعادی کم است');
 
-  onProgress?.(65, `بسته‌بندی ${copied} فایل (منیفست اصلی دست‌نخورده)...`);
+  onProgress?.(
+    70,
+    doAdStrip
+      ? `بسته‌بندی ${copied} فایل · ${adHits} جایگزینی تبلیغ در DEX`
+      : `بسته‌بندی ${copied} فایل (منیفست دست‌نخورده)`
+  );
 
   const arrayBuffer = await zip.generateAsync({
     type: 'arraybuffer',
@@ -94,9 +148,10 @@ export async function buildAndSignApk(
 
   const safeName = (project.name || 'app').replace(/[^a-zA-Z0-9_\-]/g, '_');
   const ver = project.manifest?.versionName || '1.0';
-  const outFileName = `${safeName}_resigned_v${ver}.apk`;
+  const tag = doAdStrip && adHits > 0 ? 'adstrip' : 'resigned';
+  const outFileName = `${safeName}_${tag}_v${ver}.apk`;
 
-  onProgress?.(100, 'بسته تمیز آماده — مرحله بعد: امضای Google apksig روی گوشی');
+  onProgress?.(100, 'بسته آماده — امضای Google apksig');
 
   return { blob: apkBlob, fileName: outFileName, signedSha256 };
 }
